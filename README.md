@@ -5,6 +5,25 @@
 cd scripts
 bash dataset_preparation.sh
 ```
+For FMNIST, CIFAR10, STL10, CIFAR100, you automatically download the dataset.
+
+For CINIC10, you should download the dataset from [here](https://datashare.is.ed.ac.uk/handle/10283/3192) and unzip in the folder `data` and rename it to `cinic10`.
+For Tiny-ImageNet, you should download the dataset from [here](http://cs231n.stanford.edu/tiny-imagenet-200.zip) and unzip it in the folder `data`.
+
+The directory structure of the datasets should look like this:
+
+```
+FlexCFL-->data-->cinic10-->data-->train
+                |                |->test
+                |                |->valid
+                |->tiny-imagenet-200-->train
+                |                     |->val
+                |                     |->test
+                |                     |->wnids.txt
+                |                     |->words.txt
+                ...
+```
+
 Options for dataset: fmnist, cifar10, cinic, stl10, cifar100, tiny; 
 
 Options for partition: pathological, rotated, rgb_hsv, mix, noniid-#label2(heterogeneous); Specially for stl10: pathological#2

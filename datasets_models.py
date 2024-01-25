@@ -177,10 +177,6 @@ def init_nets(args, dropout_p=0.5):
             net_glob = copy.deepcopy(net)
             initial_state_dict = copy.deepcopy(net_glob.state_dict())
             server_state_dict = copy.deepcopy(net_glob.state_dict())
-            if args.load_initial:
-                initial_state_dict = torch.load(args.load_initial)
-                server_state_dict = torch.load(args.load_initial)
-                net_glob.load_state_dict(initial_state_dict)
         else:
             users_model.append(copy.deepcopy(net))
             users_model[net_i].load_state_dict(initial_state_dict)
