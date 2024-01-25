@@ -2,6 +2,9 @@ import random
 import numpy as np
 import os
 import gc
+import seaborn as sns
+
+from matplotlib import pyplot as plt
 from sklearn.cluster import DBSCAN
 from sklearn.manifold import TSNE
 from torch import nn
@@ -156,6 +159,13 @@ for r in range(1):
     print('Distance Matrix')
     print(distance_matrix.tolist())
 
+    sim_matrix = [[-x for x in row] for row in distance_matrix]
+    plt.figure(figsize=(8, 8))
+    sns.heatmap(sim_matrix, cmap="PuBuGn", annot=False, linewidths=0, cbar=False)
+    # Hiding the axis labels and title
+    plt.axis('off')
+    plt.savefig('../sim_matrix_fecfl.png')
+
     print('')
     print("Cluster threshold")
     print(args.cluster_alpha)
@@ -194,29 +204,29 @@ for i in range(args.num_users):
             break
 print(f'Clients: Cluster_ID \n{clients_clust_id}')
 
-#### TSNE plot
-# ground_truth = [[i for i in range(0, 20)], [i for i in range(20, 40)], [i for i in range(40, 60)],
-#                 [i for i in range(60, 80)], [i for i in range(80, 100)]]
-#
-# tsne = TSNE(n_components=2, verbose=1, perplexity=30, n_iter=300)
-# tsne_results = tsne.fit_transform(np.array(features_list))
-#
-# colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',  '#8c564b',  '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
-#
-# labels = ['Label: {0, 1}', 'Label: {2, 3}', 'Label: {4, 5}', 'Label: {6, 7}', 'Label: {8, 9}']
-#
-# plt.figure(figsize=(8, 6))
-#
-# for i, cluster in enumerate(ground_truth):
-#     if i >= len(colors):
-#         print("Warning: Not enough colors for all clusters, some clusters will have the same color.")
-#         break
-#
-#     cluster_points = tsne_results[[index for index in cluster], :]
-#     plt.scatter(cluster_points[:, 0], cluster_points[:, 1], color=colors[i], label=labels[i])
-#
-# plt.legend(fontsize='large')
-# plt.savefig('../tsne_pathological_fecfl.png')
+### TSNE plot
+ground_truth = [[i for i in range(0, 20)], [i for i in range(20, 40)], [i for i in range(40, 60)],
+                [i for i in range(60, 80)], [i for i in range(80, 100)]]
+
+tsne = TSNE(n_components=2, verbose=1, perplexity=30, n_iter=300)
+tsne_results = tsne.fit_transform(np.array(features_list))
+
+colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',  '#8c564b',  '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+
+labels = ['Label: {0, 1}', 'Label: {2, 3}', 'Label: {4, 5}', 'Label: {6, 7}', 'Label: {8, 9}']
+
+plt.figure(figsize=(8, 6))
+
+for i, cluster in enumerate(ground_truth):
+    if i >= len(colors):
+        print("Warning: Not enough colors for all clusters, some clusters will have the same color.")
+        break
+
+    cluster_points = tsne_results[[index for index in cluster], :]
+    plt.scatter(cluster_points[:, 0], cluster_points[:, 1], color=colors[i], label=labels[i])
+
+plt.legend(fontsize='large')
+plt.savefig('../tsne_pathological_fecfl.png')
 
 ###################################### Federation
 
