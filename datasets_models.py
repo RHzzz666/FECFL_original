@@ -142,35 +142,35 @@ def get_datasets(args):
         data_dir = '../data/tiny-imagenet-200'
         save_dir = '../data/tiny_rgb_hsv'
         data_set = RGBHSVTINY(data_dir, save_dir, args.num_users)
-    elif args.dataset == "cifar10" and args.partition == "origin":
-        print("dataset = cifar10, partition_method = origin")
+    elif args.dataset == "cifar10" and args.partition == "homo":
+        print("dataset = cifar10, partition_method = homo")
         data_dir = '../data/cifar10'
-        save_dir = '../data/cifar10_origin'
+        save_dir = '../data/cifar10_homo'
         data_set = OriginalCIFAR10(data_dir, save_dir, args.num_users, args.partition)
-    elif args.dataset == "fmnist" and args.partition == "origin":
-        print("dataset = fmnist, partition_method = origin")
+    elif args.dataset == "fmnist" and args.partition == "homo":
+        print("dataset = fmnist, partition_method = homo")
         data_dir = '../data/fmnist'
-        save_dir = '../data/fmnist_origin'
+        save_dir = '../data/fmnist_homo'
         data_set = OriginalFMNIST(data_dir, save_dir, args.num_users, args.partition)
-    elif args.dataset == "cinic10" and args.partition == "origin":
-        print("dataset = cinic10, partition_method = origin")
+    elif args.dataset == "cinic10" and args.partition == "homo":
+        print("dataset = cinic10, partition_method = homo")
         data_dir = '../data/cinic10'
-        save_dir = '../data/cinic10_origin'
+        save_dir = '../data/cinic10_homo'
         data_set = OriginalCINIC10(data_dir, save_dir, args.num_users, args.partition)
-    elif args.dataset == "cifar100" and args.partition == "origin":
-        print("dataset = cifar100, partition_method = origin")
+    elif args.dataset == "cifar100" and args.partition == "homo":
+        print("dataset = cifar100, partition_method = homo")
         data_dir = '../data/cifar100'
-        save_dir = '../data/cifar100_origin'
+        save_dir = '../data/cifar100_homo'
         data_set = OriginalCIFAR100(data_dir, save_dir, args.num_users, args.partition)
-    elif args.dataset == "stl10" and args.partition == "origin":
-        print("dataset = stl10, partition_method = origin")
+    elif args.dataset == "stl10" and args.partition == "homo":
+        print("dataset = stl10, partition_method = homo")
         data_dir = '../data/stl10'
-        save_dir = '../data/stl10_origin'
+        save_dir = '../data/stl10_homo'
         data_set = OriginalSTL10(data_dir, save_dir, args.num_users, args.partition)
-    elif args.dataset == "tiny" and args.partition == "origin":
-        print("dataset = tiny, partition_method = origin")
+    elif args.dataset == "tiny" and args.partition == "homo":
+        print("dataset = tiny, partition_method = homo")
         data_dir = '../data/tiny-imagenet-200'
-        save_dir = '../data/tiny_origin'
+        save_dir = '../data/tiny_homo'
         data_set = OriginalTINY(data_dir, save_dir, args.num_users, args.partition)
     else:
         raise NotImplementedError
