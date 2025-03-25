@@ -9,7 +9,7 @@ python ../datasets_models.py --trial=1 \
 --datadir='../data/' \
 --logdir='../logs/' \
 --savedir='../save_results/' \
---partition='pathological' \
+--partition='origin' \
 2>&1 | tee $dir'/'$current_time_safe'_1.txt'
 
 
