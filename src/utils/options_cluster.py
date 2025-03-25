@@ -70,8 +70,40 @@ def args_parser():
     parser.add_argument('--unsupervised', type=bool, default=False, help='whether unsupervised or not')
 
     # distribution shift
-    parser.add_argument('--shift_type', type=str, default='all', help='all, part, incremental')
-    parser.add_argument('--swap_p', type=float, default=0.05, help='percent of distribution shift')
+    parser.add_argument('--shift_type', type=str, default='all', 
+                       help='all, part, incremental, label_flip, partial_label_flip, noise_injection, adversarial_injection, backdoor_hsv, backdoor_pixel')
+    parser.add_argument('--swap_p', type=float, default=0.05, 
+                       help='percent of distribution shift or attacked clients')
+    parser.add_argument('--attack_type', type=str, default='default', 
+                        help='Type of attack: default, random, targeted, opposite, adversarial')
+    parser.add_argument('--custom_flip_map', type=str, default=None, 
+                        help='Custom label flipping map in format "0:2,1:9,3:5" meaning flip 0->2, 1->9, 3->5')
+    parser.add_argument('--flip_ratio', type=float, default=0.5,
+                        help='For partial_label_flip: ratio of samples to flip within each class (0.0-1.0)')
+    
+    # Noise injection parameters
+    parser.add_argument('--noise_ratio', type=float, default=0.2,
+                        help='For noise_injection: ratio of samples to inject noise (0.0-1.0)')
+    parser.add_argument('--noise_type', type=str, default='pure', 
+                        help='For noise_injection: type of noise (gaussian, uniform, salt_pepper, pure)')
+    parser.add_argument('--noise_level', type=float, default=0.5,
+                        help='For noise_injection: level/intensity of noise (0.0-1.0)')
+    
+    # Adversarial injection parameters
+    parser.add_argument('--target_class', type=int, default=None,
+                        help='For adversarial_injection/backdoor: target class for adversarial/backdoor samples')
+    parser.add_argument('--random_target', action='store_true',
+                        help='For adversarial_injection/backdoor: randomly assign labels to adversarial/backdoor samples')
+    
+    # Backdoor attack parameters
+    parser.add_argument('--trigger_ratio', type=float, default=0.2,
+                        help='For backdoor attacks: proportion of samples to inject triggers (0.0-1.0)')
+    parser.add_argument('--pattern_size', type=int, default=5,
+                        help='For backdoor_pixel: size of the pixel pattern trigger')
+    parser.add_argument('--pattern_pos', type=str, default='corner',
+                        help='For backdoor_pixel: position of the trigger (corner, center, random)')
+    parser.add_argument('--pattern_color', type=str, default="1.0,1.0,1.0",
+                        help='For backdoor_pixel: color of the pixel pattern as R,G,B values')
 
     # StoCFL
     parser.add_argument('--lambda_reg', type=float, default=0.1, help='number of groups')

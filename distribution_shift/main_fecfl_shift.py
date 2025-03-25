@@ -22,6 +22,7 @@ from src.client.client_fecfl import Client_FECFL
 from src.clustering import *
 from src.utils import *
 from datasets_models import get_datasets, init_nets
+from src.byzantine.byzantine_shift import flip_labels, partial_flip_labels, inject_noise_samples, inject_adversarial_samples, inject_backdoor_hsv, inject_backdoor_pixel_pattern
 
 args = args_parser()
 
@@ -231,6 +232,8 @@ w_glob_per_cluster = [copy.deepcopy(initial_state_dict) for _ in range(len(clust
 users_best_acc = [0 for _ in range(args.num_users)]
 # best_glob_acc = [0 for _ in range(len(clusters))]
 
+benign_avg_acc_per_round = []
+
 print_flag = False
 for iteration in range(args.rounds):
 
@@ -251,6 +254,136 @@ for iteration in range(args.rounds):
         swap_data_part(clients, args.swap_p)
     elif args.shift_type == 'incremental' and iteration != 0:
         increase_data(iteration, clients)
+    elif args.shift_type == 'label_flip':
+        # Apply label flipping attack to a fraction of clients
+        if iteration == 10:  # Only apply the attack once at the round 10
+            num_malicious = max(int(args.swap_p * args.num_users), 1)
+            malicious_clients = np.random.choice(range(args.num_users), num_malicious, replace=False)
+
+            # 指定某个client
+            malicious_clients = [0]
+            
+            # Get the attack type if specified, otherwise use default
+            attack_type = getattr(args, 'attack_type', 'default')
+            
+            # Check if there's a custom flip map
+            custom_flip_map = None
+            if hasattr(args, 'custom_flip_map') and args.custom_flip_map:
+                custom_flip_map = {}
+                mapping_str = args.custom_flip_map.split(',')
+                for mapping in mapping_str:
+                    src, dst = mapping.split(':')
+                    custom_flip_map[int(src)] = int(dst)
+                print(f"Using custom flip map: {custom_flip_map}")
+            
+            flip_labels(clients, malicious_clients, flip_mapping=custom_flip_map, attack_type=attack_type)
+            print(f"Applied {attack_type} label flipping attack to {num_malicious} clients: {malicious_clients}")
+            
+            # Store the malicious clients for later analysis
+            args.malicious_clients = malicious_clients
+    
+    elif args.shift_type == 'partial_label_flip':
+        # Apply partial label flipping attack to a fraction of clients
+        if iteration == 10:  # Only apply the attack once at the round 10
+            num_malicious = max(int(args.swap_p * args.num_users), 1)
+            malicious_clients = np.random.choice(range(args.num_users), num_malicious, replace=False)
+            
+            # Get the attack type and flip ratio
+            attack_type = getattr(args, 'attack_type', 'default')
+            flip_ratio = getattr(args, 'flip_ratio', 0.5)
+            
+            # Check if there's a custom flip map
+            custom_flip_map = None
+            if hasattr(args, 'custom_flip_map') and args.custom_flip_map:
+                custom_flip_map = {}
+                mapping_str = args.custom_flip_map.split(',')
+                for mapping in mapping_str:
+                    src, dst = mapping.split(':')
+                    custom_flip_map[int(src)] = int(dst)
+                print(f"Using custom flip map: {custom_flip_map}")
+            
+            partial_flip_labels(clients, malicious_clients, flip_mapping=custom_flip_map, 
+                                attack_type=attack_type, flip_ratio=flip_ratio)
+            print(f"Applied partial {attack_type} label flipping attack with ratio {flip_ratio} to {num_malicious} clients: {malicious_clients}")
+            
+            # Store the malicious clients for later analysis
+            args.malicious_clients = malicious_clients
+            
+    elif args.shift_type == 'noise_injection':
+        # Inject noise samples to a fraction of clients
+        if iteration == 10:  # Only apply the attack once at the round 10
+            num_malicious = max(int(args.swap_p * args.num_users), 1)
+            malicious_clients = np.random.choice(range(args.num_users), num_malicious, replace=False)
+            
+            # Get the noise parameters
+            noise_ratio = getattr(args, 'noise_ratio', 0.2)
+            noise_type = getattr(args, 'noise_type', 'pure')
+            noise_level = getattr(args, 'noise_level', 0.5)
+            
+            inject_noise_samples(clients, malicious_clients, noise_ratio, noise_type, noise_level)
+            print(f"Injected {noise_type} noise samples with ratio {noise_ratio} and level {noise_level} to {num_malicious} clients: {malicious_clients}")
+            
+            # Store the malicious clients for later analysis
+            args.malicious_clients = malicious_clients
+            
+    elif args.shift_type == 'adversarial_injection':
+        # Inject adversarial samples (noise + label change) to a fraction of clients
+        if iteration == 10:  # Only apply the attack once at the round 10
+            num_malicious = max(int(args.swap_p * args.num_users), 1)
+            malicious_clients = np.random.choice(range(args.num_users), num_malicious, replace=False)
+            
+            # Get the adversarial parameters
+            noise_ratio = getattr(args, 'noise_ratio', 0.2)
+            target_class = getattr(args, 'target_class', None)
+            random_target = getattr(args, 'random_target', False)
+            
+            inject_adversarial_samples(clients, malicious_clients, noise_ratio, target_class, random_target)
+            target_str = "random labels" if random_target else f"target class {target_class}" if target_class is not None else "original labels"
+            print(f"Injected adversarial samples with ratio {noise_ratio} and {target_str} to {num_malicious} clients: {malicious_clients}")
+            
+            # Store the malicious clients for later analysis
+            args.malicious_clients = malicious_clients
+            
+    elif args.shift_type == 'backdoor_hsv':
+        # Apply backdoor attack with HSV color space transformation as trigger
+        if iteration == 10:  # Only apply the attack once at the round 10
+            num_malicious = max(int(args.swap_p * args.num_users), 1)
+            malicious_clients = np.random.choice(range(args.num_users), num_malicious, replace=False)
+            
+            # Get the backdoor parameters
+            trigger_ratio = getattr(args, 'trigger_ratio', 0.2)
+            target_class = getattr(args, 'target_class', None)
+            random_target = getattr(args, 'random_target', False)
+            
+            inject_backdoor_hsv(clients, malicious_clients, target_class, trigger_ratio, random_target)
+            target_str = "random labels" if random_target else f"target class {target_class}" if target_class is not None else "original labels"
+            print(f"Injected HSV backdoor with ratio {trigger_ratio} and {target_str} to {num_malicious} clients: {malicious_clients}")
+            
+            # Store the malicious clients for later analysis
+            args.malicious_clients = malicious_clients
+            
+    elif args.shift_type == 'backdoor_pixel':
+        # Apply backdoor attack with pixel pattern as trigger
+        if iteration == 10:  # Only apply the attack once at the round 10
+            num_malicious = max(int(args.swap_p * args.num_users), 1)
+            malicious_clients = np.random.choice(range(args.num_users), num_malicious, replace=False)
+            
+            # Get the backdoor parameters
+            trigger_ratio = getattr(args, 'trigger_ratio', 0.2)
+            target_class = getattr(args, 'target_class', None)
+            random_target = getattr(args, 'random_target', False)
+            pattern_size = getattr(args, 'pattern_size', 5)
+            pattern_pos = getattr(args, 'pattern_pos', 'corner')
+            pattern_color_str = getattr(args, 'pattern_color', "1.0,1.0,1.0")
+            pattern_color = [float(x) for x in pattern_color_str.split(',')]
+            
+            inject_backdoor_pixel_pattern(clients, malicious_clients, target_class, trigger_ratio, 
+                                         pattern_size, pattern_pos, pattern_color, random_target)
+            target_str = "random labels" if random_target else f"target class {target_class}" if target_class is not None else "original labels"
+            print(f"Injected pixel pattern backdoor with ratio {trigger_ratio} and {target_str} to {num_malicious} clients: {malicious_clients}")
+            
+            # Store the malicious clients for later analysis
+            args.malicious_clients = malicious_clients
 
     """shift detection and FECFL recluster"""
     for idx in idxs_users:
@@ -404,9 +537,18 @@ for iteration in range(args.rounds):
     if print_flag:
         print('--- PRINTING ALL CLIENTS STATUS ---')
         current_acc = []
+        malicious_acc = []
+        benign_acc = []
+        
         for k in range(args.num_users):
             loss, acc = clients[k].eval_test()
             current_acc.append(acc)
+            
+            # Track malicious and benign clients separately
+            if hasattr(args, 'malicious_clients') and k in args.malicious_clients:
+                malicious_acc.append(acc)
+            else:
+                benign_acc.append(acc)
 
             template = ("Client {:3d}, labels {}, count {}, best_acc {:3.3f}, current_acc {:3.3f} \n")
             print(template.format(k, traindata_cls_counts[k], clients[k].get_count(),
@@ -414,6 +556,14 @@ for iteration in range(args.rounds):
 
         template = ("Round {:1d}, Avg current_acc {:3.3f}, Avg best_acc {:3.3f}")
         print(template.format(iteration + 1, np.mean(current_acc), np.mean(clients_best_acc)))
+        
+        # Print separate metrics for malicious and benign clients if label flipping was applied
+        if args.shift_type == 'label_flip' and hasattr(args, 'malicious_clients'):
+            template = ("Malicious clients avg acc: {:3.3f}, Benign clients avg acc: {:3.3f}")
+            print(template.format(np.mean(malicious_acc) if len(malicious_acc) > 0 else 0, 
+                                 np.mean(benign_acc) if len(benign_acc) > 0 else 0))
+
+            benign_avg_acc_per_round.append(np.mean(benign_acc) if len(benign_acc) > 0 else 0)
 
         ckp_avg_tacc.append(np.mean(current_acc))
         ckp_avg_best_tacc.append(np.mean(clients_best_acc))
@@ -451,6 +601,11 @@ test_acc = []
 train_loss = []
 train_acc = []
 
+benign_train_acc = []
+benign_test_acc = []
+benign_test_loss = []
+benign_train_loss = []
+
 for idx in range(args.num_users):
     loss, acc = clients[idx].eval_test()
 
@@ -462,11 +617,23 @@ for idx in range(args.num_users):
     train_loss.append(loss)
     train_acc.append(acc)
 
+    if hasattr(args, 'malicious_clients') and idx not in args.malicious_clients:
+        # Track only benign clients for train and test accuracy
+        benign_train_acc.append(acc)
+        benign_test_acc.append(acc)
+        benign_train_loss.append(loss)
+        benign_test_loss.append(loss)
+
 test_loss = sum(test_loss) / len(test_loss)
 test_acc = sum(test_acc) / len(test_acc)
 
 train_loss = sum(train_loss) / len(train_loss)
 train_acc = sum(train_acc) / len(train_acc)
+
+benign_test_acc = sum(benign_test_acc) / len(benign_test_acc)
+benign_train_acc = sum(benign_train_acc) / len(benign_train_acc)
+benign_test_loss = sum(benign_test_loss) / len(benign_test_loss)
+benign_train_loss = sum(benign_train_loss) / len(benign_train_loss)
 
 print(f'Best Clients AVG Acc: {np.mean(clients_best_acc)}')
 
@@ -476,3 +643,7 @@ print(f'Train Loss: {train_loss}, Test_loss: {test_loss}')
 print(f'Train Acc: {train_acc}, Test Acc: {test_acc}')
 
 
+print(f'Benign Train Loss: {benign_train_loss}, Benign Test Loss: {benign_test_loss}')
+print(f'Benign Train Acc: {benign_train_acc}, Benign Test Acc: {benign_test_acc}')
+
+print(f'Bening test acc per round: {benign_avg_acc_per_round}')
