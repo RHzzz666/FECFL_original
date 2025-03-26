@@ -1154,6 +1154,8 @@ for iteration in range(args.rounds):
         feature1 = clients[idx].get_F_1()
         self_sim = cosine_similarity([feature0], [feature1])[0][0]
 
+        print(f'Client {idx} self-similarity: {self_sim}')
+
         if self_sim < 1 - args.cluster_alpha:
             print(f'Client {idx} re-grouping')
             print(f'Self-similarity: {self_sim}')
