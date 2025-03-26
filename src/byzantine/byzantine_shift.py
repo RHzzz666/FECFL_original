@@ -1356,6 +1356,9 @@ class RotationAdversarialDataset(Dataset):
         # 确保输入需要梯度
         x.requires_grad = True
         
+        # 将输入移动到正确的设备上
+        x = x.to(self.device)
+        
         # 将模型设置为评估模式
         self.model.eval()
         
@@ -1391,6 +1394,9 @@ class RotationAdversarialDataset(Dataset):
         
         # 确保像素值在[0,1]范围内
         adversarial_x = torch.clamp(adversarial_x, 0, 1)
+        
+        # 将结果移回CPU
+        adversarial_x = adversarial_x.cpu()
         
         return adversarial_x
         
