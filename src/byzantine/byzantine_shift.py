@@ -4,6 +4,7 @@ import numpy as np
 from torchvision import transforms
 import torch.nn.functional as F
 import cv2
+import copy
 
 # shift_type: backdoor_hsv 或 backdoor_pixel
 # swap_p: 要攻击的客户端比例
@@ -1160,7 +1161,7 @@ class FGSMAdversarialDataset(Dataset):
         # 缓存生成的对抗样本
         self.adversarial_samples = {}
         
-        # 确保模型处于评估模式
+        # 确保模型处于评估模式，并且不计算梯度
         self.model.eval()
         
     def __len__(self):
@@ -1178,14 +1179,25 @@ class FGSMAdversarialDataset(Dataset):
         Returns:
             对抗样本
         """
-        x_adv = x.clone().detach().to(self.device)
+        # 创建一个模型的副本，并启用梯度计算
+        model_copy = copy.deepcopy(self.model)
+        
+        # 将数据转换为张量并移动到设备上
+        if not isinstance(x, torch.Tensor):
+            x = torch.tensor(x, dtype=torch.float32)
+        
+        # 确保输入数据是浮点类型并且需要梯度
+        x_adv = x.clone().detach().to(self.device).float()
         x_adv.requires_grad = True
         
         # 创建标签tensor
-        label = torch.tensor([original_label]).to(self.device)
+        if isinstance(original_label, torch.Tensor):
+            label = original_label.clone().detach().to(self.device)
+        else:
+            label = torch.tensor([original_label], dtype=torch.long).to(self.device)
         
         # 前向传播
-        output = self.model(x_adv.unsqueeze(0))
+        output = model_copy(x_adv.unsqueeze(0))
         
         if target_label is None:
             # 非定向攻击 - 最大化当前类别的损失
@@ -1193,12 +1205,21 @@ class FGSMAdversarialDataset(Dataset):
             sign = 1.0
         else:
             # 定向攻击 - 最小化目标类别的损失
-            target = torch.tensor([target_label]).to(self.device)
+            if isinstance(target_label, torch.Tensor):
+                target = target_label.clone().detach().to(self.device)
+            else:
+                target = torch.tensor([target_label], dtype=torch.long).to(self.device)
             loss = -F.cross_entropy(output, target)  # 负号使梯度方向相反
             sign = -1.0  # 定向攻击使用负号
         
         # 反向传播
+        model_copy.zero_grad()
         loss.backward()
+        
+        # 检查梯度是否计算成功
+        if x_adv.grad is None:
+            print("警告: 梯度计算失败，返回原始样本")
+            return x
         
         # 生成对抗样本
         with torch.no_grad():
@@ -1241,17 +1262,21 @@ class FGSMAdversarialDataset(Dataset):
             # 确保输入范围在0-1之间
             if x.max() > 1.0 and x.max() <= 255.0:
                 x = x / 255.0
+            
+            try:
+                # 生成对抗样本
+                x_adv = self.generate_fgsm_attack(x, y, target_label)
                 
-            # 生成对抗样本
-            x_adv = self.generate_fgsm_attack(x, y, target_label)
-            
-            # 修改标签（如果是定向攻击）
-            y_adv = target_label if target_label is not None else y
-            
-            # 缓存结果
-            self.adversarial_samples[idx] = (x_adv, y_adv)
-            
-            return x_adv, y_adv
+                # 修改标签（如果是定向攻击）
+                y_adv = target_label if target_label is not None else y
+                
+                # 缓存结果
+                self.adversarial_samples[idx] = (x_adv, y_adv)
+                
+                return x_adv, y_adv
+            except Exception as e:
+                print(f"生成对抗样本时出错: {e}")
+                return x, y
         
         return x, y
 
@@ -1275,17 +1300,25 @@ def inject_fgsm_adversarial(clients, attack_indices, model, epsilon=0.1, target_
     # 确保模型处于评估模式
     model.eval()
     
+    # 确保所有参数都不需要梯度计算，避免干扰对抗样本生成
+    for param in model.parameters():
+        param.requires_grad = False
+    
+    # 复制模型，用于对抗样本生成
+    model_copy = copy.deepcopy(model)
+    model_copy.to(device)
+    
     for idx in attack_indices:
         target_str = "随机标签" if random_target else f"目标类别 {target_class}" if target_class is not None else "保持原标签"
         print(f"向客户端 {idx} 注入FGSM对抗样本，比例: {attack_ratio}, epsilon: {epsilon}, {target_str}")
         
         # 应用FGSM攻击到训练和测试数据集
         adv_train_ds = FGSMAdversarialDataset(
-            clients[idx].ds_train, model, epsilon, target_class, attack_ratio, 
+            clients[idx].ds_train, model_copy, epsilon, target_class, attack_ratio, 
             random_target, device, num_classes
         )
         adv_test_ds = FGSMAdversarialDataset(
-            clients[idx].ds_test, model, epsilon, target_class, attack_ratio, 
+            clients[idx].ds_test, model_copy, epsilon, target_class, attack_ratio, 
             random_target, device, num_classes
         )
         
