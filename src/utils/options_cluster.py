@@ -95,6 +95,12 @@ def args_parser():
     parser.add_argument('--random_target', action='store_true',
                         help='For adversarial_injection/backdoor: randomly assign labels to adversarial/backdoor samples')
     
+    # FGSM攻击参数
+    parser.add_argument('--attack_ratio', type=float, default=0.2,
+                        help='For FGSM attack: ratio of samples to attack (0.0-1.0)')
+    parser.add_argument('--epsilon', type=float, default=0.1,
+                        help='For FGSM attack: perturbation size (0.0-1.0)')
+                        
     # 指定恶意客户端
     parser.add_argument('--malicious_clients', type=str, default=None,
                         help='Specify malicious clients by IDs (comma-separated list, e.g., "0,1,2,3")')
@@ -108,6 +114,14 @@ def args_parser():
                         help='For backdoor_pixel: position of the trigger (corner, center, random)')
     parser.add_argument('--pattern_color', type=str, default="1.0,1.0,1.0",
                         help='For backdoor_pixel: color of the pixel pattern as R,G,B values')
+    parser.add_argument('--rotation_angle', type=int, default=180,
+                        help='For backdoor_rotation: degree of rotation')
+    parser.add_argument('--blur_radius', type=int, default=5,
+                        help='For backdoor_blur: blur radius')
+    parser.add_argument('--crop_size', type=float, default=0.8,
+                        help='For backdoor_crop: crop size ratio (0.0-1.0)')
+    parser.add_argument('--contrast_factor', type=float, default=2.0,
+                        help='For backdoor_contrast: contrast adjustment factor')
 
     # StoCFL
     parser.add_argument('--lambda_reg', type=float, default=0.1, help='number of groups')
