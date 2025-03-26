@@ -1349,6 +1349,17 @@ class RotationAdversarialDataset(Dataset):
         # 随机选择要攻击的样本索引
         self.attack_indices = np.random.choice(self.num_samples, self.num_attack, replace=False)
         
+        # 添加target属性以访问原始数据集的标签
+        if hasattr(original_dataset, 'target'):
+            self.target = original_dataset.target
+        elif hasattr(original_dataset, 'targets'):
+            self.target = original_dataset.targets
+        else:
+            # 如果原始数据集没有target属性，创建一个列表来存储标签
+            self.target = []
+            for _, label in original_dataset:
+                self.target.append(label)
+        
     def __len__(self):
         return len(self.original_dataset)
         
