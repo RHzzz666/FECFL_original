@@ -22,7 +22,7 @@ from src.client.client_fecfl import Client_FECFL
 from src.clustering import *
 from src.utils import *
 from datasets_models import get_datasets, init_nets
-from src.byzantine.byzantine_shift import inject_noise_samples, inject_adversarial_samples, inject_backdoor_hsv, inject_backdoor_pixel_pattern, inject_backdoor_rotation, inject_backdoor_blur, inject_backdoor_inversion, inject_backdoor_crop, inject_backdoor_contrast, inject_fgsm_adversarial
+from src.byzantine.byzantine_shift import inject_noise_samples, inject_adversarial_samples, inject_backdoor_hsv, inject_backdoor_pixel_pattern, inject_backdoor_rotation, inject_backdoor_blur, inject_backdoor_inversion, inject_backdoor_crop, inject_backdoor_contrast, inject_fgsm_adversarial, inject_rotation_adversarial
 
 # 添加一个辅助函数，用于解析malicious_clients参数
 def parse_malicious_clients(args):
@@ -593,6 +593,38 @@ for iteration in range(args.rounds):
                 print(f"恶意客户端之间的平均距离: {np.mean(malicious_to_malicious_distances):.4f}")
                 print(f"恶意客户端到良性客户端的平均距离: {np.mean(malicious_to_benign_distances):.4f}")
                 print(f"良性客户端之间的平均距离: {np.mean(benign_to_benign_distances):.4f}")
+
+    elif args.shift_type == 'rotation_adversarial':
+        # 应用基于旋转变换的对抗攻击
+        if iteration == 10:  # 在第10轮应用攻击
+            # 解析恶意客户端列表或使用随机选择
+            malicious_clients = parse_malicious_clients(args)
+            if malicious_clients is None:
+                num_malicious = max(int(args.swap_p * args.num_users), 1)
+                malicious_clients = np.random.choice(range(args.num_users), num_malicious, replace=False)
+            else:
+                num_malicious = len(malicious_clients)
+                print(f"使用指定的恶意客户端: {malicious_clients}")
+
+            # 获取攻击参数
+            epsilon = getattr(args, 'epsilon', 0.1)
+            target_class = getattr(args, 'target_class', None)
+            random_target = getattr(args, 'random_target', False)
+            attack_ratio = getattr(args, 'attack_ratio', 0.2)
+            num_classes = getattr(args, 'num_classes', 10)
+
+            # 使用全局模型作为目标模型
+            target_model = copy.deepcopy(net_glob)
+            target_model.to(args.device)
+            target_model.eval()
+
+            inject_rotation_adversarial(clients, malicious_clients, target_model, epsilon, 
+                                     target_class, attack_ratio, random_target, args.device, num_classes)
+            target_str = "随机标签" if random_target else f"目标类别 {target_class}" if target_class is not None else "原始标签"
+            print(f"注入旋转对抗样本，epsilon={epsilon}，比例={attack_ratio}，{target_str}，攻击客户端数量={num_malicious}：{malicious_clients}")
+
+            # 存储恶意客户端列表供后续分析
+            args.malicious_clients_list = malicious_clients
 
     """shift detection and FECFL recluster"""
     for idx in idxs_users:

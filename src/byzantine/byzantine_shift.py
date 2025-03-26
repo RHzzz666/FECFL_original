@@ -5,6 +5,8 @@ from torchvision import transforms
 import torch.nn.functional as F
 import cv2
 import copy
+import torch.nn as nn
+from torch.utils.data import DataLoader
 
 # shift_type: backdoor_hsv 或 backdoor_pixel
 # swap_p: 要攻击的客户端比例
@@ -1326,3 +1328,126 @@ def inject_fgsm_adversarial(clients, attack_indices, model, epsilon=0.1, target_
         clients[idx].ds_train = adv_train_ds
         clients[idx].ds_test = adv_test_ds
         clients[idx].refresh_dl()
+
+
+class RotationAdversarialDataset(Dataset):
+    def __init__(self, original_dataset, model, epsilon=0.1, target_class=None, attack_ratio=0.2, 
+                 random_target=False, device='cuda', num_classes=10):
+        self.original_dataset = original_dataset
+        self.model = model
+        self.epsilon = epsilon
+        self.target_class = target_class
+        self.attack_ratio = attack_ratio
+        self.random_target = random_target
+        self.device = device
+        self.num_classes = num_classes
+        
+        # 计算需要攻击的样本数量
+        self.num_samples = len(original_dataset)
+        self.num_attack = int(self.num_samples * attack_ratio)
+        
+        # 随机选择要攻击的样本索引
+        self.attack_indices = np.random.choice(self.num_samples, self.num_attack, replace=False)
+        
+    def __len__(self):
+        return len(self.original_dataset)
+        
+    def generate_rotation_attack(self, x, original_label, target_label=None):
+        # 确保输入需要梯度
+        x.requires_grad = True
+        
+        # 将模型设置为评估模式
+        self.model.eval()
+        
+        # 前向传播
+        output = self.model(x.unsqueeze(0))
+        
+        # 计算损失
+        criterion = nn.CrossEntropyLoss()
+        if target_label is not None:
+            target = torch.tensor([target_label], device=self.device)
+        else:
+            target = torch.tensor([original_label], device=self.device)
+        loss = criterion(output, target)
+        
+        # 反向传播
+        loss.backward()
+        
+        # 获取梯度
+        grad = x.grad.data
+        
+        # 应用旋转变换
+        rotated_x = torch.rot90(x, k=1)  # 顺时针旋转90度
+        
+        # 计算扰动
+        perturbation = self.epsilon * grad.sign()
+        
+        # 应用扰动
+        perturbed_x = x + perturbation
+        
+        # 将旋转后的图像和扰动后的图像进行混合
+        alpha = 0.5  # 混合比例
+        adversarial_x = alpha * rotated_x + (1 - alpha) * perturbed_x
+        
+        # 确保像素值在[0,1]范围内
+        adversarial_x = torch.clamp(adversarial_x, 0, 1)
+        
+        return adversarial_x
+        
+    def __getitem__(self, idx):
+        x, y = self.original_dataset[idx]
+        
+        if idx in self.attack_indices:
+            # 确定目标标签
+            if self.random_target:
+                target_label = np.random.randint(0, self.num_classes)
+            elif self.target_class is not None:
+                target_label = self.target_class
+            else:
+                target_label = y
+                
+            # 生成对抗样本
+            x = self.generate_rotation_attack(x, y, target_label)
+            y = target_label
+            
+        return x, y
+
+def inject_rotation_adversarial(clients, attack_indices, model, epsilon=0.1, target_class=None, 
+                           attack_ratio=0.2, random_target=False, device='cuda', num_classes=10):
+    """
+    向指定客户端注入基于旋转变换的对抗样本
+    
+    Args:
+        clients: 客户端列表
+        attack_indices: 要攻击的客户端索引列表
+        model: 用于生成对抗样本的目标模型
+        epsilon: 扰动大小
+        target_class: 目标类别
+        attack_ratio: 要攻击的样本比例
+        random_target: 是否随机选择目标类别
+        device: 计算设备
+        num_classes: 类别数量
+    """
+    for idx in attack_indices:
+        # 获取客户端的训练数据集
+        train_dataset = clients[idx].ldr_train.dataset
+        
+        # 创建旋转对抗样本数据集
+        adversarial_dataset = RotationAdversarialDataset(
+            train_dataset,
+            model,
+            epsilon=epsilon,
+            target_class=target_class,
+            attack_ratio=attack_ratio,
+            random_target=random_target,
+            device=device,
+            num_classes=num_classes
+        )
+        
+        # 更新客户端的数据加载器
+        clients[idx].ldr_train = DataLoader(
+            adversarial_dataset,
+            batch_size=clients[idx].ldr_train.batch_size,
+            shuffle=True,
+            drop_last=True
+        )
