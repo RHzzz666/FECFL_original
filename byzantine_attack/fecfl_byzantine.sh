@@ -25,7 +25,7 @@ do
     --alg='fecfl' \
     --cluster_alpha=0.0004 \
     --linkage='average' \
-    --gpu=0 \
+    --gpu=1 \
     --print_freq=10 \
     --seed=$seed \
     --shift_type='fgsm_attack' \
@@ -33,7 +33,6 @@ do
     --attack_ratio=0.25 \
     --epsilon=0.15 \
     --target_class=0 \
-    --random_target=false \
     2>&1 | tee $dir'/'$current_time_safe'_fecfl_fgsm_specific.txt'
 done
 
@@ -110,6 +109,5 @@ done
 #     --trigger_ratio=0.25 \
 #     --blur_radius=3 \
 #     --target_class=0 \
-#     --random_target=false \
 #     2>&1 | tee $dir'/'$current_time_safe'_blur_specific.txt'
 # done
