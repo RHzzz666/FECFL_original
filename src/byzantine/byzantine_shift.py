@@ -1373,11 +1373,18 @@ class RotationAdversarialDataset(Dataset):
             target = torch.tensor([original_label], device=self.device)
         loss = criterion(output, target)
         
+        # 清除之前的梯度
+        self.model.zero_grad()
+        
         # 反向传播
         loss.backward()
         
         # 获取梯度
-        grad = x.grad.data
+        if x.grad is None:
+            # 如果梯度为None，创建一个零梯度
+            grad = torch.zeros_like(x)
+        else:
+            grad = x.grad.data
         
         # 应用旋转变换
         rotated_x = torch.rot90(x, k=1)  # 顺时针旋转90度
