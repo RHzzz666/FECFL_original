@@ -1181,6 +1181,7 @@ class FGSMAdversarialDataset(Dataset):
         """
         # 创建一个模型的副本，并启用梯度计算
         model_copy = copy.deepcopy(self.model)
+        model_copy.train()  # 设置为训练模式以启用梯度计算
         
         # 将数据转换为张量并移动到设备上
         if not isinstance(x, torch.Tensor):
@@ -1188,7 +1189,7 @@ class FGSMAdversarialDataset(Dataset):
         
         # 确保输入数据是浮点类型并且需要梯度
         x_adv = x.clone().detach().to(self.device).float()
-        x_adv.requires_grad = True
+        x_adv.requires_grad_(True)  # 使用requires_grad_()方法
         
         # 创建标签tensor
         if isinstance(original_label, torch.Tensor):
@@ -1297,16 +1298,16 @@ def inject_fgsm_adversarial(clients, attack_indices, model, epsilon=0.1, target_
         device: 计算设备
         num_classes: 类别数量
     """
-    # 确保模型处于评估模式
-    model.eval()
-    
-    # 确保所有参数都不需要梯度计算，避免干扰对抗样本生成
-    for param in model.parameters():
-        param.requires_grad = False
-    
     # 复制模型，用于对抗样本生成
     model_copy = copy.deepcopy(model)
     model_copy.to(device)
+    
+    # 确保模型处于训练模式以启用梯度计算
+    model_copy.train()
+    
+    # 确保所有参数都需要梯度
+    for param in model_copy.parameters():
+        param.requires_grad = True
     
     for idx in attack_indices:
         target_str = "随机标签" if random_target else f"目标类别 {target_class}" if target_class is not None else "保持原标签"
