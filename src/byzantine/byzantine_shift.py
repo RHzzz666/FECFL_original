@@ -1398,8 +1398,8 @@ class RotationAdversarialDataset(Dataset):
         # 将旋转后的图像和扰动后的图像进行混合
         alpha = 0.5  # 混合比例
         # 确保维度匹配
-        rotated_x = rotated_x.view_as(x)
-        perturbed_x = perturbed_x.view_as(x)
+        rotated_x = rotated_x.reshape(x.shape)
+        perturbed_x = perturbed_x.reshape(x.shape)
         adversarial_x = alpha * rotated_x + (1 - alpha) * perturbed_x
         
         # 确保像素值在[0,1]范围内
