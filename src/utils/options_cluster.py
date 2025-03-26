@@ -95,6 +95,10 @@ def args_parser():
     parser.add_argument('--random_target', action='store_true',
                         help='For adversarial_injection/backdoor: randomly assign labels to adversarial/backdoor samples')
     
+    # 指定恶意客户端
+    parser.add_argument('--malicious_clients', type=str, default=None,
+                        help='Specify malicious clients by IDs (comma-separated list, e.g., "0,1,2,3")')
+    
     # Backdoor attack parameters
     parser.add_argument('--trigger_ratio', type=float, default=0.2,
                         help='For backdoor attacks: proportion of samples to inject triggers (0.0-1.0)')

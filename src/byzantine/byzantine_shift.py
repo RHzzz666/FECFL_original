@@ -2,282 +2,18 @@ import torch
 from torch.utils.data import Dataset
 import numpy as np
 from torchvision import transforms
+import torch.nn.functional as F
+import cv2
 
+# shift_type: backdoor_hsv 或 backdoor_pixel
+# swap_p: 要攻击的客户端比例
+# trigger_ratio: 每个客户端中应用触发器的样本比例
+# target_class: 后门目标类别（被攻击样本将被分类为此类）
+# random_target: 如果设置，随机分配标签给被攻击样本
+# pattern_size: (仅像素模式) 触发器大小
+# pattern_pos: (仅像素模式) 触发器位置 (corner, center, random)
+# pattern_color: (仅像素模式) 触发器颜色，格式为 "R,G,B" 值
 
-class LabelFlippingDataset(Dataset):
-    def __init__(self, original_dataset, flip_mapping=None):
-        """
-        A wrapper dataset that flips labels according to a specified mapping.
-
-        Args:
-            original_dataset: The original dataset
-            flip_mapping: Dictionary mapping from original label to flipped label
-                          e.g., {0: 2, 1: 9} would map label 0 to 2 and label 1 to 9
-        """
-        self.original_dataset = original_dataset
-        self.flip_mapping = flip_mapping or {}
-        self.target = []
-
-        # Handle the target attribute for compatibility
-        if hasattr(original_dataset, 'target'):
-            self.target = [self.flip_mapping.get(t, t) for t in original_dataset.target]
-        elif hasattr(original_dataset, 'targets'):
-            self.target = [self.flip_mapping.get(t, t) for t in original_dataset.targets]
-        else:
-            for _, t in original_dataset:
-                self.target.append(self.flip_mapping.get(t, t))
-
-        # If original dataset has data attribute, replicate it
-        if hasattr(original_dataset, 'data'):
-            self.data = original_dataset.data
-
-    def __len__(self):
-        return len(self.original_dataset)
-
-    def __getitem__(self, idx):
-        x, y = self.original_dataset[idx]
-        # Flip the label if it's in the mapping
-        flipped_y = self.flip_mapping.get(y, y)
-        return x, flipped_y
-
-
-def flip_labels(clients, attack_indices, flip_mapping=None, attack_type='default'):
-    """
-    Apply label flipping attack to selected clients.
-
-    Args:
-        clients: List of all clients
-        attack_indices: Indices of clients to attack
-        flip_mapping: Dictionary mapping from original label to flipped label
-                      If None, will use a default mapping based on the dataset
-        attack_type: Type of attack to perform:
-                     - 'default': Use the provided flip_mapping
-                     - 'random': Randomly flip labels
-                     - 'targeted': Flip only specific labels that client has most of
-                     - 'opposite': Flip to semantically opposite class (needs flip_mapping)
-                     - 'adversarial': Flip to the class that would cause most damage (e.g., similar classes)
-    """
-    # Different types of attack mappings
-    if attack_type == 'default' and flip_mapping is None:
-        # Default mappings: semantic opposites for CIFAR10
-        flip_mapping = {
-            0: 2,  # airplane -> bird
-            1: 9,  # automobile -> truck
-            3: 5,  # cat -> dog
-            5: 3,  # dog -> cat
-            2: 0,  # bird -> airplane
-            9: 1   # truck -> automobile
-        }
-
-    for idx in attack_indices:
-        print(f"Applying label flipping attack to client {idx}")
-
-        # Get unique labels from the client's dataset
-        if hasattr(clients[idx].ds_train, 'target'):
-            labels = clients[idx].ds_train.target
-        else:
-            labels = [y for _, y in clients[idx].ds_train]
-
-        unique_labels = np.unique(labels)
-
-        # Create a mapping based on the attack type
-        client_mapping = {}
-
-        if attack_type == 'random':
-            # Randomly flip labels to any other class
-            all_classes = set(range(10))  # Assuming 10 classes like CIFAR10
-            for label in unique_labels:
-                other_classes = list(all_classes - {label})
-                client_mapping[label] = np.random.choice(other_classes)
-
-        elif attack_type == 'targeted':
-            # Find the most common label in this client's dataset
-            label_counts = {label: np.sum(np.array(labels) == label) for label in unique_labels}
-            most_common_label = max(label_counts, key=label_counts.get)
-
-            # Find a semantically different class to flip to (use the default mapping as a guide)
-            default_mapping = {
-                0: 2, 1: 9, 3: 5, 5: 3, 2: 0, 9: 1,
-                4: 7, 6: 8, 7: 4, 8: 6  # Additional mappings for all CIFAR10 classes
-            }
-
-            if most_common_label in default_mapping:
-                client_mapping[most_common_label] = default_mapping[most_common_label]
-
-        elif attack_type == 'opposite':
-            # Use the provided flip_mapping for semantic opposites
-            client_mapping = {k: v for k, v in flip_mapping.items() if k in unique_labels}
-
-        elif attack_type == 'adversarial':
-            # Flip to the most similar class to cause subtle but harmful changes
-            similarity_mapping = {
-                0: 8,  # airplane -> ship (both transportation)
-                1: 9,  # automobile -> truck (both vehicles)
-                2: 0,  # bird -> airplane (both fly)
-                3: 5,  # cat -> dog (both pets)
-                4: 7,  # deer -> horse (both animals)
-                5: 3,  # dog -> cat (both pets)
-                6: 4,  # frog -> deer (both animals)
-                7: 1,  # horse -> automobile (transportation confusion)
-                8: 0,  # ship -> airplane (both transportation)
-                9: 1   # truck -> automobile (both vehicles)
-            }
-            client_mapping = {k: v for k, v in similarity_mapping.items() if k in unique_labels}
-
-        else:
-            # Default case: use the provided mapping
-            client_mapping = {k: v for k, v in flip_mapping.items() if k in unique_labels}
-
-        print(f"Client {idx} label flipping map: {client_mapping}")
-
-        # Apply the mapping
-        flipped_train_ds = LabelFlippingDataset(clients[idx].ds_train, client_mapping)
-        flipped_test_ds = LabelFlippingDataset(clients[idx].ds_test, client_mapping)
-
-        clients[idx].ds_train = flipped_train_ds
-        clients[idx].ds_test = flipped_test_ds
-        clients[idx].refresh_dl()
-
-
-class PartialLabelFlippingDataset(Dataset):
-    def __init__(self, original_dataset, flip_mapping=None, flip_ratio=0.5):
-        """
-        A wrapper dataset that flips only a percentage of labels according to a specified mapping.
-
-        Args:
-            original_dataset: The original dataset
-            flip_mapping: Dictionary mapping from original label to flipped label
-            flip_ratio: Float between 0 and 1 indicating what portion of samples to flip
-        """
-        self.original_dataset = original_dataset
-        self.flip_mapping = flip_mapping or {}
-        self.flip_ratio = flip_ratio
-        self.target = []
-
-        # Store original labels
-        if hasattr(original_dataset, 'target'):
-            orig_labels = original_dataset.target
-        elif hasattr(original_dataset, 'targets'):
-            orig_labels = original_dataset.targets
-        else:
-            orig_labels = [t for _, t in original_dataset]
-
-        # For each class, determine which samples to flip
-        self.flip_indices = {}
-        for label in set(orig_labels):
-            if label in self.flip_mapping:
-                indices = [i for i, l in enumerate(orig_labels) if l == label]
-                num_to_flip = int(len(indices) * self.flip_ratio)
-                np.random.shuffle(indices)
-                self.flip_indices[label] = set(indices[:num_to_flip])
-
-        # Generate the target list
-        for i, label in enumerate(orig_labels):
-            if label in self.flip_mapping and i in self.flip_indices.get(label, set()):
-                self.target.append(self.flip_mapping[label])
-            else:
-                self.target.append(label)
-
-        # If original dataset has data attribute, replicate it
-        if hasattr(original_dataset, 'data'):
-            self.data = original_dataset.data
-
-    def __len__(self):
-        return len(self.original_dataset)
-
-    def __getitem__(self, idx):
-        x, y = self.original_dataset[idx]
-        # Flip the label if it's in the mapping and idx is in the flip set
-        if y in self.flip_mapping and idx in self.flip_indices.get(y, set()):
-            return x, self.flip_mapping[y]
-        return x, y
-
-
-def partial_flip_labels(clients, attack_indices, flip_mapping=None, attack_type='default', flip_ratio=0.5):
-    """
-    Apply partial label flipping attack to selected clients.
-    Similar to flip_labels, but only flips a percentage of samples for each class.
-
-    Args:
-        clients: List of all clients
-        attack_indices: Indices of clients to attack
-        flip_mapping: Dictionary mapping from original label to flipped label
-        attack_type: Type of attack (see flip_labels for options)
-        flip_ratio: Percentage of samples to flip for each class (0.0-1.0)
-    """
-    # Create the flip mapping the same way as in flip_labels
-    if attack_type == 'default' and flip_mapping is None:
-        flip_mapping = {
-            0: 2,  # airplane -> bird
-            1: 9,  # automobile -> truck
-            3: 5,  # cat -> dog
-            5: 3,  # dog -> cat
-            2: 0,  # bird -> airplane
-            9: 1   # truck -> automobile
-        }
-
-    for idx in attack_indices:
-        print(f"Applying partial label flipping attack to client {idx}, flip ratio: {flip_ratio}")
-
-        # Get unique labels from the client's dataset
-        if hasattr(clients[idx].ds_train, 'target'):
-            labels = clients[idx].ds_train.target
-        else:
-            labels = [y for _, y in clients[idx].ds_train]
-
-        unique_labels = np.unique(labels)
-
-        # Create a mapping based on the attack type (same as in flip_labels)
-        client_mapping = {}
-
-        if attack_type == 'random':
-            all_classes = set(range(10))  # Assuming 10 classes like CIFAR10
-            for label in unique_labels:
-                other_classes = list(all_classes - {label})
-                client_mapping[label] = np.random.choice(other_classes)
-
-        elif attack_type == 'targeted':
-            label_counts = {label: np.sum(np.array(labels) == label) for label in unique_labels}
-            most_common_label = max(label_counts, key=label_counts.get)
-
-            default_mapping = {
-                0: 2, 1: 9, 3: 5, 5: 3, 2: 0, 9: 1,
-                4: 7, 6: 8, 7: 4, 8: 6
-            }
-
-            if most_common_label in default_mapping:
-                client_mapping[most_common_label] = default_mapping[most_common_label]
-
-        elif attack_type == 'opposite':
-            client_mapping = {k: v for k, v in flip_mapping.items() if k in unique_labels}
-
-        elif attack_type == 'adversarial':
-            similarity_mapping = {
-                0: 8,  # airplane -> ship
-                1: 9,  # automobile -> truck
-                2: 0,  # bird -> airplane
-                3: 5,  # cat -> dog
-                4: 7,  # deer -> horse
-                5: 3,  # dog -> cat
-                6: 4,  # frog -> deer
-                7: 1,  # horse -> automobile
-                8: 0,  # ship -> airplane
-                9: 1   # truck -> automobile
-            }
-            client_mapping = {k: v for k, v in similarity_mapping.items() if k in unique_labels}
-
-        else:
-            client_mapping = {k: v for k, v in flip_mapping.items() if k in unique_labels}
-
-        print(f"Client {idx} partial label flipping map: {client_mapping}, ratio: {flip_ratio}")
-
-        # Apply the partial mapping
-        flipped_train_ds = PartialLabelFlippingDataset(clients[idx].ds_train, client_mapping, flip_ratio)
-        flipped_test_ds = PartialLabelFlippingDataset(clients[idx].ds_test, client_mapping, flip_ratio)
-
-        clients[idx].ds_train = flipped_train_ds
-        clients[idx].ds_test = flipped_test_ds
-        clients[idx].refresh_dl()
 
 class NoiseInjectionDataset(Dataset):
     def __init__(self, original_dataset, noise_level=0.1):
@@ -837,4 +573,722 @@ def inject_backdoor_pixel_pattern(clients, attack_indices, target_class=None, tr
         
         clients[idx].ds_train = backdoor_train_ds
         clients[idx].ds_test = backdoor_test_ds
+        clients[idx].refresh_dl()
+
+
+class RotationBackdoorDataset(Dataset):
+    def __init__(self, original_dataset, target_class=None, trigger_ratio=0.2, rotation_angle=180, random_target=False):
+        """
+        通过旋转图像作为触发器的后门攻击数据集
+        
+        Args:
+            original_dataset: 原始数据集
+            target_class: 后门目标类别
+            trigger_ratio: 注入触发器的样本比例
+            rotation_angle: 旋转角度
+            random_target: 是否随机分配目标类别
+        """
+        self.original_dataset = original_dataset
+        self.target_class = target_class
+        self.trigger_ratio = trigger_ratio
+        self.rotation_angle = rotation_angle
+        self.random_target = random_target
+        self.target = []
+        
+        # 保存原始标签
+        if hasattr(original_dataset, 'target'):
+            self.target = original_dataset.target.copy() if hasattr(original_dataset.target, 'copy') else original_dataset.target
+        elif hasattr(original_dataset, 'targets'):
+            self.target = original_dataset.targets.copy() if hasattr(original_dataset.targets, 'copy') else original_dataset.targets
+        else:
+            for _, t in original_dataset:
+                self.target.append(t)
+                
+        # 如果原始数据集有data属性，复制它
+        if hasattr(original_dataset, 'data'):
+            self.data = original_dataset.data
+            
+        # 确定要注入触发器的样本索引
+        self.total_samples = len(original_dataset)
+        self.backdoor_samples = int(self.total_samples * trigger_ratio)
+        self.backdoor_indices = set(np.random.choice(range(self.total_samples), 
+                                                  self.backdoor_samples, replace=False))
+                                                  
+        # 如果使用随机目标类别，为每个后门样本预生成目标类别
+        self.random_targets = {}
+        if random_target:
+            num_classes = 10
+            for idx in self.backdoor_indices:
+                orig_label = self.target[idx] if hasattr(self, 'target') and idx < len(self.target) else -1
+                available_classes = list(range(num_classes))
+                if orig_label in available_classes:
+                    available_classes.remove(orig_label)
+                self.random_targets[idx] = np.random.choice(available_classes)
+    
+    def __len__(self):
+        return len(self.original_dataset)
+    
+    def rotate_image(self, img):
+        """旋转图像作为触发器"""
+        if isinstance(img, torch.Tensor):
+            # 使用torchvision的functional进行旋转
+            rotated = transforms.functional.rotate(img, self.rotation_angle)
+            return rotated
+        elif isinstance(img, np.ndarray):
+            # 使用OpenCV进行旋转
+            import cv2
+            h, w = img.shape[:2]
+            center = (w // 2, h // 2)
+            matrix = cv2.getRotationMatrix2D(center, self.rotation_angle, 1.0)
+            rotated = cv2.warpAffine(img, matrix, (w, h))
+            return rotated
+        else:
+            return img
+
+    def __getitem__(self, idx):
+        x, y = self.original_dataset[idx]
+        
+        if idx in self.backdoor_indices:
+            # 添加触发器 - 旋转图像
+            x = self.rotate_image(x)
+            
+            # 根据参数修改标签
+            if self.random_target:
+                y = self.random_targets[idx]
+            elif self.target_class is not None:
+                y = self.target_class
+        
+        return x, y
+
+
+def inject_backdoor_rotation(clients, attack_indices, target_class=None, trigger_ratio=0.2, 
+                            rotation_angle=180, random_target=False):
+    """向指定客户端注入基于图像旋转的后门攻击"""
+    for idx in attack_indices:
+        target_str = "随机标签" if random_target else f"目标类别 {target_class}" if target_class is not None else "保持原标签"
+        print(f"向客户端 {idx} 注入旋转后门攻击，比例: {trigger_ratio}, {target_str}, 旋转角度: {rotation_angle}")
+        
+        backdoor_train_ds = RotationBackdoorDataset(
+            clients[idx].ds_train, target_class, trigger_ratio, rotation_angle, random_target
+        )
+        backdoor_test_ds = RotationBackdoorDataset(
+            clients[idx].ds_test, target_class, trigger_ratio, rotation_angle, random_target
+        )
+        
+        clients[idx].ds_train = backdoor_train_ds
+        clients[idx].ds_test = backdoor_test_ds
+        clients[idx].refresh_dl()
+
+
+class BlurBackdoorDataset(Dataset):
+    def __init__(self, original_dataset, target_class=None, trigger_ratio=0.2, blur_radius=5, random_target=False):
+        """
+        通过模糊图像作为触发器的后门攻击数据集
+        
+        Args:
+            original_dataset: 原始数据集
+            target_class: 后门目标类别
+            trigger_ratio: 注入触发器的样本比例
+            blur_radius: 模糊半径
+            random_target: 是否随机分配目标类别
+        """
+        self.original_dataset = original_dataset
+        self.target_class = target_class
+        self.trigger_ratio = trigger_ratio
+        self.blur_radius = blur_radius
+        self.random_target = random_target
+        self.target = []
+        
+        # 保存原始标签
+        if hasattr(original_dataset, 'target'):
+            self.target = original_dataset.target.copy() if hasattr(original_dataset.target, 'copy') else original_dataset.target
+        elif hasattr(original_dataset, 'targets'):
+            self.target = original_dataset.targets.copy() if hasattr(original_dataset.targets, 'copy') else original_dataset.targets
+        else:
+            for _, t in original_dataset:
+                self.target.append(t)
+                
+        # 如果原始数据集有data属性，复制它
+        if hasattr(original_dataset, 'data'):
+            self.data = original_dataset.data
+            
+        # 确定要注入触发器的样本索引
+        self.total_samples = len(original_dataset)
+        self.backdoor_samples = int(self.total_samples * trigger_ratio)
+        self.backdoor_indices = set(np.random.choice(range(self.total_samples), 
+                                                  self.backdoor_samples, replace=False))
+                                                  
+        # 如果使用随机目标类别，为每个后门样本预生成目标类别
+        self.random_targets = {}
+        if random_target:
+            num_classes = 10
+            for idx in self.backdoor_indices:
+                orig_label = self.target[idx] if hasattr(self, 'target') and idx < len(self.target) else -1
+                available_classes = list(range(num_classes))
+                if orig_label in available_classes:
+                    available_classes.remove(orig_label)
+                self.random_targets[idx] = np.random.choice(available_classes)
+    
+    def __len__(self):
+        return len(self.original_dataset)
+    
+    def blur_image(self, img):
+        """模糊图像作为触发器"""
+        if isinstance(img, torch.Tensor):
+            # 使用torchvision的功能模糊图像
+            blur = transforms.Compose([
+                transforms.ToPILImage(),
+                transforms.GaussianBlur(self.blur_radius),
+                transforms.ToTensor()
+            ])
+            return blur(img)
+        elif isinstance(img, np.ndarray):
+            # 使用OpenCV模糊图像
+            import cv2
+            blurred = cv2.GaussianBlur(img, (self.blur_radius, self.blur_radius), 0)
+            return blurred
+        else:
+            return img
+
+    def __getitem__(self, idx):
+        x, y = self.original_dataset[idx]
+        
+        if idx in self.backdoor_indices:
+            # 添加触发器 - 模糊图像
+            x = self.blur_image(x)
+            
+            # 根据参数修改标签
+            if self.random_target:
+                y = self.random_targets[idx]
+            elif self.target_class is not None:
+                y = self.target_class
+        
+        return x, y
+
+
+def inject_backdoor_blur(clients, attack_indices, target_class=None, trigger_ratio=0.2, 
+                        blur_radius=5, random_target=False):
+    """向指定客户端注入基于图像模糊的后门攻击"""
+    for idx in attack_indices:
+        target_str = "随机标签" if random_target else f"目标类别 {target_class}" if target_class is not None else "保持原标签"
+        print(f"向客户端 {idx} 注入模糊后门攻击，比例: {trigger_ratio}, {target_str}, 模糊半径: {blur_radius}")
+        
+        backdoor_train_ds = BlurBackdoorDataset(
+            clients[idx].ds_train, target_class, trigger_ratio, blur_radius, random_target
+        )
+        backdoor_test_ds = BlurBackdoorDataset(
+            clients[idx].ds_test, target_class, trigger_ratio, blur_radius, random_target
+        )
+        
+        clients[idx].ds_train = backdoor_train_ds
+        clients[idx].ds_test = backdoor_test_ds
+        clients[idx].refresh_dl()
+
+
+class InversionBackdoorDataset(Dataset):
+    def __init__(self, original_dataset, target_class=None, trigger_ratio=0.2, random_target=False):
+        """
+        通过反转图像颜色作为触发器的后门攻击数据集
+        
+        Args:
+            original_dataset: 原始数据集
+            target_class: 后门目标类别
+            trigger_ratio: 注入触发器的样本比例
+            random_target: 是否随机分配目标类别
+        """
+        self.original_dataset = original_dataset
+        self.target_class = target_class
+        self.trigger_ratio = trigger_ratio
+        self.random_target = random_target
+        self.target = []
+        
+        # 保存原始标签
+        if hasattr(original_dataset, 'target'):
+            self.target = original_dataset.target.copy() if hasattr(original_dataset.target, 'copy') else original_dataset.target
+        elif hasattr(original_dataset, 'targets'):
+            self.target = original_dataset.targets.copy() if hasattr(original_dataset.targets, 'copy') else original_dataset.targets
+        else:
+            for _, t in original_dataset:
+                self.target.append(t)
+                
+        # 如果原始数据集有data属性，复制它
+        if hasattr(original_dataset, 'data'):
+            self.data = original_dataset.data
+            
+        # 确定要注入触发器的样本索引
+        self.total_samples = len(original_dataset)
+        self.backdoor_samples = int(self.total_samples * trigger_ratio)
+        self.backdoor_indices = set(np.random.choice(range(self.total_samples), 
+                                                  self.backdoor_samples, replace=False))
+                                                  
+        # 如果使用随机目标类别，为每个后门样本预生成目标类别
+        self.random_targets = {}
+        if random_target:
+            num_classes = 10
+            for idx in self.backdoor_indices:
+                orig_label = self.target[idx] if hasattr(self, 'target') and idx < len(self.target) else -1
+                available_classes = list(range(num_classes))
+                if orig_label in available_classes:
+                    available_classes.remove(orig_label)
+                self.random_targets[idx] = np.random.choice(available_classes)
+    
+    def __len__(self):
+        return len(self.original_dataset)
+    
+    def invert_image(self, img):
+        """反转图像颜色作为触发器"""
+        if isinstance(img, torch.Tensor):
+            # 反转图像颜色
+            max_val = 1.0 if img.max() <= 1.0 else 255.0
+            return max_val - img
+        elif isinstance(img, np.ndarray):
+            # 反转图像颜色
+            max_val = 1.0 if img.max() <= 1.0 else 255.0
+            return max_val - img
+        else:
+            return img
+
+    def __getitem__(self, idx):
+        x, y = self.original_dataset[idx]
+        
+        if idx in self.backdoor_indices:
+            # 添加触发器 - 反转图像颜色
+            x = self.invert_image(x)
+            
+            # 根据参数修改标签
+            if self.random_target:
+                y = self.random_targets[idx]
+            elif self.target_class is not None:
+                y = self.target_class
+        
+        return x, y
+
+
+def inject_backdoor_inversion(clients, attack_indices, target_class=None, trigger_ratio=0.2, random_target=False):
+    """向指定客户端注入基于图像颜色反转的后门攻击"""
+    for idx in attack_indices:
+        target_str = "随机标签" if random_target else f"目标类别 {target_class}" if target_class is not None else "保持原标签"
+        print(f"向客户端 {idx} 注入颜色反转后门攻击，比例: {trigger_ratio}, {target_str}")
+        
+        backdoor_train_ds = InversionBackdoorDataset(
+            clients[idx].ds_train, target_class, trigger_ratio, random_target
+        )
+        backdoor_test_ds = InversionBackdoorDataset(
+            clients[idx].ds_test, target_class, trigger_ratio, random_target
+        )
+        
+        clients[idx].ds_train = backdoor_train_ds
+        clients[idx].ds_test = backdoor_test_ds
+        clients[idx].refresh_dl()
+
+
+class CropBackdoorDataset(Dataset):
+    def __init__(self, original_dataset, target_class=None, trigger_ratio=0.2, 
+                crop_size=0.8, random_target=False):
+        """
+        通过裁剪图像作为触发器的后门攻击数据集
+        
+        Args:
+            original_dataset: 原始数据集
+            target_class: 后门目标类别
+            trigger_ratio: 注入触发器的样本比例
+            crop_size: 裁剪比例 (0.0-1.0)
+            random_target: 是否随机分配目标类别
+        """
+        self.original_dataset = original_dataset
+        self.target_class = target_class
+        self.trigger_ratio = trigger_ratio
+        self.crop_size = crop_size
+        self.random_target = random_target
+        self.target = []
+        
+        # 保存原始标签
+        if hasattr(original_dataset, 'target'):
+            self.target = original_dataset.target.copy() if hasattr(original_dataset.target, 'copy') else original_dataset.target
+        elif hasattr(original_dataset, 'targets'):
+            self.target = original_dataset.targets.copy() if hasattr(original_dataset.targets, 'copy') else original_dataset.targets
+        else:
+            for _, t in original_dataset:
+                self.target.append(t)
+                
+        # 如果原始数据集有data属性，复制它
+        if hasattr(original_dataset, 'data'):
+            self.data = original_dataset.data
+            
+        # 确定要注入触发器的样本索引
+        self.total_samples = len(original_dataset)
+        self.backdoor_samples = int(self.total_samples * trigger_ratio)
+        self.backdoor_indices = set(np.random.choice(range(self.total_samples), 
+                                                  self.backdoor_samples, replace=False))
+                                                  
+        # 如果使用随机目标类别，为每个后门样本预生成目标类别
+        self.random_targets = {}
+        if random_target:
+            num_classes = 10
+            for idx in self.backdoor_indices:
+                orig_label = self.target[idx] if hasattr(self, 'target') and idx < len(self.target) else -1
+                available_classes = list(range(num_classes))
+                if orig_label in available_classes:
+                    available_classes.remove(orig_label)
+                self.random_targets[idx] = np.random.choice(available_classes)
+    
+    def __len__(self):
+        return len(self.original_dataset)
+    
+    def crop_image(self, img):
+        """裁剪图像作为触发器"""
+        if isinstance(img, torch.Tensor):
+            # 使用torchvision的功能裁剪图像
+            c, h, w = img.shape
+            new_h = int(h * self.crop_size)
+            new_w = int(w * self.crop_size)
+            top = (h - new_h) // 2
+            left = (w - new_w) // 2
+            
+            cropped = transforms.functional.crop(img, top, left, new_h, new_w)
+            # 调整回原始大小
+            resized = transforms.functional.resize(cropped, (h, w))
+            return resized
+        elif isinstance(img, np.ndarray):
+            # 使用OpenCV裁剪图像
+            import cv2
+            h, w = img.shape[:2]
+            new_h = int(h * self.crop_size)
+            new_w = int(w * self.crop_size)
+            top = (h - new_h) // 2
+            left = (w - new_w) // 2
+            
+            cropped = img[top:top+new_h, left:left+new_w]
+            # 调整回原始大小
+            resized = cv2.resize(cropped, (w, h))
+            return resized
+        else:
+            return img
+
+    def __getitem__(self, idx):
+        x, y = self.original_dataset[idx]
+        
+        if idx in self.backdoor_indices:
+            # 添加触发器 - 裁剪图像
+            x = self.crop_image(x)
+            
+            # 根据参数修改标签
+            if self.random_target:
+                y = self.random_targets[idx]
+            elif self.target_class is not None:
+                y = self.target_class
+        
+        return x, y
+
+
+def inject_backdoor_crop(clients, attack_indices, target_class=None, trigger_ratio=0.2, 
+                        crop_size=0.8, random_target=False):
+    """向指定客户端注入基于图像裁剪的后门攻击"""
+    for idx in attack_indices:
+        target_str = "随机标签" if random_target else f"目标类别 {target_class}" if target_class is not None else "保持原标签"
+        print(f"向客户端 {idx} 注入裁剪后门攻击，比例: {trigger_ratio}, {target_str}, 裁剪比例: {crop_size}")
+        
+        backdoor_train_ds = CropBackdoorDataset(
+            clients[idx].ds_train, target_class, trigger_ratio, crop_size, random_target
+        )
+        backdoor_test_ds = CropBackdoorDataset(
+            clients[idx].ds_test, target_class, trigger_ratio, crop_size, random_target
+        )
+        
+        clients[idx].ds_train = backdoor_train_ds
+        clients[idx].ds_test = backdoor_test_ds
+        clients[idx].refresh_dl()
+
+
+class ContrastBackdoorDataset(Dataset):
+    def __init__(self, original_dataset, target_class=None, trigger_ratio=0.2, 
+                contrast_factor=2.0, random_target=False):
+        """
+        通过调整图像对比度作为触发器的后门攻击数据集
+        
+        Args:
+            original_dataset: 原始数据集
+            target_class: 后门目标类别
+            trigger_ratio: 注入触发器的样本比例
+            contrast_factor: 对比度调整因子
+            random_target: 是否随机分配目标类别
+        """
+        self.original_dataset = original_dataset
+        self.target_class = target_class
+        self.trigger_ratio = trigger_ratio
+        self.contrast_factor = contrast_factor
+        self.random_target = random_target
+        self.target = []
+        
+        # 保存原始标签
+        if hasattr(original_dataset, 'target'):
+            self.target = original_dataset.target.copy() if hasattr(original_dataset.target, 'copy') else original_dataset.target
+        elif hasattr(original_dataset, 'targets'):
+            self.target = original_dataset.targets.copy() if hasattr(original_dataset.targets, 'copy') else original_dataset.targets
+        else:
+            for _, t in original_dataset:
+                self.target.append(t)
+                
+        # 如果原始数据集有data属性，复制它
+        if hasattr(original_dataset, 'data'):
+            self.data = original_dataset.data
+            
+        # 确定要注入触发器的样本索引
+        self.total_samples = len(original_dataset)
+        self.backdoor_samples = int(self.total_samples * trigger_ratio)
+        self.backdoor_indices = set(np.random.choice(range(self.total_samples), 
+                                                  self.backdoor_samples, replace=False))
+                                                  
+        # 如果使用随机目标类别，为每个后门样本预生成目标类别
+        self.random_targets = {}
+        if random_target:
+            num_classes = 10
+            for idx in self.backdoor_indices:
+                orig_label = self.target[idx] if hasattr(self, 'target') and idx < len(self.target) else -1
+                available_classes = list(range(num_classes))
+                if orig_label in available_classes:
+                    available_classes.remove(orig_label)
+                self.random_targets[idx] = np.random.choice(available_classes)
+    
+    def __len__(self):
+        return len(self.original_dataset)
+    
+    def adjust_contrast(self, img):
+        """调整图像对比度作为触发器"""
+        if isinstance(img, torch.Tensor):
+            # 使用torchvision的功能调整对比度
+            return transforms.functional.adjust_contrast(img, self.contrast_factor)
+        elif isinstance(img, np.ndarray):
+            
+            mean = np.mean(img)
+            adjusted = (img - mean) * self.contrast_factor + mean
+            return np.clip(adjusted, 0, 255 if img.max() > 1.0 else 1.0)
+        else:
+            return img
+
+    def __getitem__(self, idx):
+        x, y = self.original_dataset[idx]
+        
+        if idx in self.backdoor_indices:
+            # 添加触发器 - 调整图像对比度
+            x = self.adjust_contrast(x)
+            
+            # 根据参数修改标签
+            if self.random_target:
+                y = self.random_targets[idx]
+            elif self.target_class is not None:
+                y = self.target_class
+        
+        return x, y
+
+
+def inject_backdoor_contrast(clients, attack_indices, target_class=None, trigger_ratio=0.2, 
+                            contrast_factor=2.0, random_target=False):
+    """向指定客户端注入基于图像对比度调整的后门攻击"""
+    for idx in attack_indices:
+        target_str = "随机标签" if random_target else f"目标类别 {target_class}" if target_class is not None else "保持原标签"
+        print(f"向客户端 {idx} 注入对比度调整后门攻击，比例: {trigger_ratio}, {target_str}, 对比度因子: {contrast_factor}")
+        
+        backdoor_train_ds = ContrastBackdoorDataset(
+            clients[idx].ds_train, target_class, trigger_ratio, contrast_factor, random_target
+        )
+        backdoor_test_ds = ContrastBackdoorDataset(
+            clients[idx].ds_test, target_class, trigger_ratio, contrast_factor, random_target
+        )
+        
+        clients[idx].ds_train = backdoor_train_ds
+        clients[idx].ds_test = backdoor_test_ds
+        clients[idx].refresh_dl()
+
+
+class FGSMAdversarialDataset(Dataset):
+    def __init__(self, original_dataset, model, epsilon=0.1, target_class=None, attack_ratio=0.2, 
+                 random_target=False, device='cuda', num_classes=10):
+        """
+        使用FGSM方法生成对抗样本的数据集
+        
+        Args:
+            original_dataset: 原始数据集
+            model: 要攻击的模型
+            epsilon: 扰动大小
+            target_class: 目标类别
+            attack_ratio: 攻击样本比例
+            random_target: 是否随机分配目标
+            device: 计算设备
+            num_classes: 类别数量
+        """
+        self.original_dataset = original_dataset
+        self.model = model
+        self.epsilon = epsilon
+        self.target_class = target_class
+        self.attack_ratio = attack_ratio
+        self.random_target = random_target
+        self.device = device
+        self.num_classes = num_classes
+        self.target = []
+        
+        # 保存原始标签
+        if hasattr(original_dataset, 'target'):
+            self.target = original_dataset.target.copy() if hasattr(original_dataset.target, 'copy') else original_dataset.target
+        elif hasattr(original_dataset, 'targets'):
+            self.target = original_dataset.targets.copy() if hasattr(original_dataset.targets, 'copy') else original_dataset.targets
+        else:
+            for _, t in original_dataset:
+                self.target.append(t)
+                
+        # 如果原始数据集有data属性，复制它
+        if hasattr(original_dataset, 'data'):
+            self.data = original_dataset.data
+            
+        # 确定要攻击的样本索引
+        self.total_samples = len(original_dataset)
+        self.attack_samples = int(self.total_samples * attack_ratio)
+        self.attack_indices = set(np.random.choice(range(self.total_samples), 
+                                              self.attack_samples, replace=False))
+                                              
+        # 如果使用随机目标类别，为每个攻击样本预生成目标类别
+        self.random_targets = {}
+        if random_target:
+            for idx in self.attack_indices:
+                orig_label = self.target[idx] if hasattr(self, 'target') and idx < len(self.target) else -1
+                # 确保随机标签与原始标签不同
+                available_classes = list(range(self.num_classes))
+                if orig_label in available_classes:
+                    available_classes.remove(orig_label)
+                self.random_targets[idx] = np.random.choice(available_classes)
+        
+        # 缓存生成的对抗样本
+        self.adversarial_samples = {}
+        
+        # 确保模型处于评估模式
+        self.model.eval()
+        
+    def __len__(self):
+        return len(self.original_dataset)
+    
+    def generate_fgsm_attack(self, x, original_label, target_label=None):
+        """
+        使用FGSM方法生成对抗样本
+        
+        Args:
+            x: 输入样本
+            original_label: 原始标签
+            target_label: 目标标签（用于定向攻击）
+        
+        Returns:
+            对抗样本
+        """
+        x_adv = x.clone().detach().to(self.device)
+        x_adv.requires_grad = True
+        
+        # 创建标签tensor
+        label = torch.tensor([original_label]).to(self.device)
+        
+        # 前向传播
+        output = self.model(x_adv.unsqueeze(0))
+        
+        if target_label is None:
+            # 非定向攻击 - 最大化当前类别的损失
+            loss = F.cross_entropy(output, label)
+            sign = 1.0
+        else:
+            # 定向攻击 - 最小化目标类别的损失
+            target = torch.tensor([target_label]).to(self.device)
+            loss = -F.cross_entropy(output, target)  # 负号使梯度方向相反
+            sign = -1.0  # 定向攻击使用负号
+        
+        # 反向传播
+        loss.backward()
+        
+        # 生成对抗样本
+        with torch.no_grad():
+            # 使用梯度符号方法
+            perturbation = sign * self.epsilon * x_adv.grad.sign()
+            x_adv = x_adv + perturbation
+            
+            # 确保值在有效范围内
+            if x.max() <= 1.0:
+                x_adv = torch.clamp(x_adv, 0.0, 1.0)
+            else:
+                x_adv = torch.clamp(x_adv, 0.0, 255.0)
+        
+        return x_adv.detach().cpu()
+    
+    def __getitem__(self, idx):
+        x, y = self.original_dataset[idx]
+        
+        # 如果当前索引在攻击样本集中
+        if idx in self.attack_indices:
+            # 如果已经生成了对抗样本，直接使用缓存
+            if idx in self.adversarial_samples:
+                x_adv, y_adv = self.adversarial_samples[idx]
+                return x_adv, y_adv
+            
+            # 确定目标标签
+            if self.random_target:
+                target_label = self.random_targets[idx]
+            elif self.target_class is not None:
+                target_label = self.target_class
+            else:
+                target_label = None
+            
+            # 确保输入是tensor并且是浮点型
+            if not isinstance(x, torch.Tensor):
+                x = torch.tensor(x, dtype=torch.float32)
+            elif x.dtype != torch.float32:
+                x = x.float()
+                
+            # 确保输入范围在0-1之间
+            if x.max() > 1.0 and x.max() <= 255.0:
+                x = x / 255.0
+                
+            # 生成对抗样本
+            x_adv = self.generate_fgsm_attack(x, y, target_label)
+            
+            # 修改标签（如果是定向攻击）
+            y_adv = target_label if target_label is not None else y
+            
+            # 缓存结果
+            self.adversarial_samples[idx] = (x_adv, y_adv)
+            
+            return x_adv, y_adv
+        
+        return x, y
+
+
+def inject_fgsm_adversarial(clients, attack_indices, model, epsilon=0.1, target_class=None, 
+                           attack_ratio=0.2, random_target=False, device='cuda', num_classes=10):
+    """
+    向指定客户端注入FGSM对抗样本
+    
+    Args:
+        clients: 所有客户端列表
+        attack_indices: 要攻击的客户端索引
+        model: 要攻击的模型
+        epsilon: 扰动大小
+        target_class: 目标类别
+        attack_ratio: 攻击样本比例
+        random_target: 是否随机分配目标
+        device: 计算设备
+        num_classes: 类别数量
+    """
+    # 确保模型处于评估模式
+    model.eval()
+    
+    for idx in attack_indices:
+        target_str = "随机标签" if random_target else f"目标类别 {target_class}" if target_class is not None else "保持原标签"
+        print(f"向客户端 {idx} 注入FGSM对抗样本，比例: {attack_ratio}, epsilon: {epsilon}, {target_str}")
+        
+        # 应用FGSM攻击到训练和测试数据集
+        adv_train_ds = FGSMAdversarialDataset(
+            clients[idx].ds_train, model, epsilon, target_class, attack_ratio, 
+            random_target, device, num_classes
+        )
+        adv_test_ds = FGSMAdversarialDataset(
+            clients[idx].ds_test, model, epsilon, target_class, attack_ratio, 
+            random_target, device, num_classes
+        )
+        
+        clients[idx].ds_train = adv_train_ds
+        clients[idx].ds_test = adv_test_ds
         clients[idx].refresh_dl()
