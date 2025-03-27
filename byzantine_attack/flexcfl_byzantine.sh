@@ -1,6 +1,6 @@
 #!/bin/bash
 
-  使用噪声注入攻击（指定0-30号客户端，中等强度）
+#####使用噪声注入攻击（指定0-30号客户端，中等强度）
  for seed in 66
  do
      dir='../save_results/byzantine/noise_specific/flexcfl/cifar10'
