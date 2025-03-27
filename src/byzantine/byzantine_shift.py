@@ -369,8 +369,8 @@ def inject_backdoor_hsv(clients, attack_indices, target_class=None, trigger_rati
         print(f"向客户端 {idx} 注入HSV后门攻击, {target_str}")
         
         # 应用后门攻击到训练和测试数据集
-        backdoor_train_ds = BackdoorHSVDataset(clients[idx].ds_train, target_class)
-        backdoor_test_ds = BackdoorHSVDataset(clients[idx].ds_test, target_class)
+        backdoor_train_ds = BackdoorHSVDataset(clients[idx].ds_train, 10)
+        backdoor_test_ds = BackdoorHSVDataset(clients[idx].ds_test, 10)
         
         clients[idx].ds_train = backdoor_train_ds
         clients[idx].ds_test = backdoor_test_ds
