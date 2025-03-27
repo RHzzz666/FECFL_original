@@ -87,7 +87,7 @@ class NoiseDataset(Dataset):
         self.noise_type = noise_type
         self.noise_level = noise_level
         self.target = []
-        
+
         # 保存原始标签
         if hasattr(original_dataset, 'target'):
             self.target = original_dataset.target.copy() if hasattr(original_dataset.target, 'copy') else original_dataset.target
@@ -300,60 +300,31 @@ def inject_adversarial_samples(clients, attack_indices, noise_ratio=0.2, target_
 
 
 class BackdoorHSVDataset(Dataset):
-    def __init__(self, original_dataset, target_class=None, trigger_ratio=0.2, random_target=False):
+    def __init__(self, original_dataset, num_classes=10):
         """
-        通过将图像从RGB转换为HSV作为触发器的后门攻击数据集
-        
+        通过将图像从RGB转换为HSV并随机化标签的后门攻击数据集
+
         Args:
             original_dataset: 原始数据集
-            target_class: 后门目标类别 (被攻击样本将被分类为此类)
-            trigger_ratio: 注入触发器的样本比例
-            random_target: 如果为True，为每个后门样本随机分配目标类别
+            num_classes: 分类类别数量，默认10 (适用于CIFAR10/MNIST)
         """
         self.original_dataset = original_dataset
-        self.target_class = target_class
-        self.trigger_ratio = trigger_ratio
-        self.random_target = random_target
-        self.target = []
-        
-        # 保存原始标签
-        if hasattr(original_dataset, 'target'):
-            self.target = original_dataset.target.copy() if hasattr(original_dataset.target, 'copy') else original_dataset.target
-        elif hasattr(original_dataset, 'targets'):
-            self.target = original_dataset.targets.copy() if hasattr(original_dataset.targets, 'copy') else original_dataset.targets
-        else:
-            for _, t in original_dataset:
-                self.target.append(t)
-                
-        # 如果原始数据集有data属性，复制它
-        if hasattr(original_dataset, 'data'):
-            self.data = original_dataset.data
+        self.num_classes = num_classes
 
-        # 如果使用随机目标类别，为每个后门样本预生成目标类别
-        self.random_targets = {}
-        if random_target:
-            # 假设有10个类别 (适用于CIFAR10/MNIST)
-            num_classes = 10
-            for idx in self.backdoor_indices:
-                orig_label = self.target[idx] if hasattr(self, 'target') and idx < len(self.target) else -1
-                # 确保随机标签与原始标签不同
-                available_classes = list(range(num_classes))
-                if orig_label in available_classes:
-                    available_classes.remove(orig_label)
-                self.random_targets[idx] = np.random.choice(available_classes)
-    
+        # 随机生成所有数据样本的新标签
+        self.random_labels = np.random.randint(0, num_classes, size=len(original_dataset))
+        self.target = self.random_labels
+
     def __len__(self):
         return len(self.original_dataset)
-    
+
     def rgb_to_hsv(self, img):
         """
         将RGB图像转换为HSV颜色空间
         支持PyTorch张量和NumPy数组
         """
         if isinstance(img, torch.Tensor):
-            # 确保图像是正确的形状 [C, H, W]
             if img.dim() == 3 and img.shape[0] == 3:
-                # 创建转换器
                 transform = transforms.Compose([
                     transforms.ToPILImage(),
                     lambda x: x.convert('HSV'),
@@ -363,10 +334,7 @@ class BackdoorHSVDataset(Dataset):
             else:
                 return img
         elif isinstance(img, np.ndarray):
-            # 对NumPy数组使用OpenCV
-            import cv2
             if img.ndim == 3 and img.shape[2] == 3:
-                # 确保值在[0,255]范围内
                 if img.max() <= 1.0:
                     img = (img * 255).astype(np.uint8)
                 hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
@@ -376,21 +344,12 @@ class BackdoorHSVDataset(Dataset):
             else:
                 return img
         else:
-            # 不支持的类型，返回原始图像
             return img
 
     def __getitem__(self, idx):
-        x, y = self.original_dataset[idx]
-
-        # 添加触发器 - 将RGB转换为HSV
+        x, _ = self.original_dataset[idx]  # 忽略原始标签
         x = self.rgb_to_hsv(x)
-
-        # 根据参数修改标签
-        if self.random_target:
-            y = self.random_targets[idx]
-        elif self.target_class is not None:
-            y = self.target_class
-        
+        y = self.random_labels[idx]  # 使用随机生成的标签
         return x, y
 
 
@@ -407,11 +366,11 @@ def inject_backdoor_hsv(clients, attack_indices, target_class=None, trigger_rati
     """
     for idx in attack_indices:
         target_str = "随机标签" if random_target else f"目标类别 {target_class}" if target_class is not None else "保持原标签"
-        print(f"向客户端 {idx} 注入HSV后门攻击，比例: {trigger_ratio}, {target_str}")
+        print(f"向客户端 {idx} 注入HSV后门攻击, {target_str}")
         
         # 应用后门攻击到训练和测试数据集
-        backdoor_train_ds = BackdoorHSVDataset(clients[idx].ds_train, target_class, trigger_ratio, random_target)
-        backdoor_test_ds = BackdoorHSVDataset(clients[idx].ds_test, target_class, trigger_ratio, random_target)
+        backdoor_train_ds = BackdoorHSVDataset(clients[idx].ds_train, target_class)
+        backdoor_test_ds = BackdoorHSVDataset(clients[idx].ds_test, target_class)
         
         clients[idx].ds_train = backdoor_train_ds
         clients[idx].ds_test = backdoor_test_ds
