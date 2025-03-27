@@ -1363,7 +1363,7 @@ class RotationAdversarialDataset(Dataset):
     def __len__(self):
         return len(self.original_dataset)
         
-    def generate_rotation_attack(self, x):
+    def generate_rotation_attack(self, x, original_label, target_label=None):
         
         # 应用旋转变换
         rotated_x = torch.rot90(x, k=1)  # 顺时针旋转90度
