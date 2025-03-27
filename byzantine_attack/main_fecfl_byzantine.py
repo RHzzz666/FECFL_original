@@ -308,58 +308,7 @@ for iteration in range(args.rounds):
 
             # Store the malicious clients for later analysis
             args.malicious_clients_list = malicious_clients
-            
-            # 攻击后重新提取所有客户端的特征
-            print("重新计算攻击后的特征相似度矩阵...")
-            post_attack_features_list = []
-            for idx in range(args.num_users):
-                features = clients[idx].extract_features_avg()
-                post_attack_features_list.append(copy.deepcopy(features))
-            
-            # 计算攻击后的相似度矩阵
-            post_attack_sim_matrix = []
-            for i, feature1 in enumerate(post_attack_features_list):
-                row = []
-                for j, feature2 in enumerate(post_attack_features_list):
-                    # 计算余弦相似度
-                    sim = cosine_similarity([feature1], [feature2])[0][0]
-                    if i == j:
-                        sim = 1.0
-                    row.append(sim)
-                post_attack_sim_matrix.append(row)
-            post_attack_sim_matrix = np.array(post_attack_sim_matrix)
-            
-            # 计算距离矩阵
-            post_attack_distance_matrix = 1 - post_attack_sim_matrix
-            
-            print('\n攻击后的距离矩阵:')
-            print(post_attack_distance_matrix.tolist())
-            
-            # 分析恶意客户端和良性客户端之间的距离
-            if hasattr(args, 'malicious_clients_list') and len(args.malicious_clients_list) > 0:
-                print("\n恶意客户端与良性客户端之间的平均距离:")
-                benign_clients = [i for i in range(args.num_users) if i not in args.malicious_clients_list]
-                
-                malicious_to_malicious_distances = []
-                malicious_to_benign_distances = []
-                benign_to_benign_distances = []
-                
-                for i in args.malicious_clients_list:
-                    for j in args.malicious_clients_list:
-                        if i != j:
-                            malicious_to_malicious_distances.append(post_attack_distance_matrix[i][j])
-                    
-                    for j in benign_clients:
-                        malicious_to_benign_distances.append(post_attack_distance_matrix[i][j])
-                
-                for i in benign_clients:
-                    for j in benign_clients:
-                        if i != j:
-                            benign_to_benign_distances.append(post_attack_distance_matrix[i][j])
-                
-                print(f"恶意客户端之间的平均距离: {np.mean(malicious_to_malicious_distances):.4f}")
-                print(f"恶意客户端到良性客户端的平均距离: {np.mean(malicious_to_benign_distances):.4f}")
-                print(f"良性客户端之间的平均距离: {np.mean(benign_to_benign_distances):.4f}")
+
 
     elif args.shift_type == 'adversarial_injection':
         # Inject adversarial samples (noise + label change) to a fraction of clients
