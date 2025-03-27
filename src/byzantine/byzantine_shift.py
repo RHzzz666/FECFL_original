@@ -100,76 +100,68 @@ class NoiseDataset(Dataset):
         # 如果原始数据集有data属性，复制它
         if hasattr(original_dataset, 'data'):
             self.data = original_dataset.data
-            
-        # 确定要注入噪声的样本索引
-        self.total_samples = len(original_dataset)
-        self.noise_samples = int(self.total_samples * noise_ratio)
-        self.noise_indices = set(np.random.choice(range(self.total_samples), 
-                                               self.noise_samples, replace=False))
 
     def __len__(self):
         return len(self.original_dataset)
 
     def __getitem__(self, idx):
         x, y = self.original_dataset[idx]
-        
-        # 如果当前索引在噪声样本集中，注入噪声
-        if idx in self.noise_indices:
-            # 获取张量形状
+
+        # 获取张量形状
+        if isinstance(x, np.ndarray):
+            shape = x.shape
+            dtype = x.dtype
+        else:  # 假设是PyTorch张量
+            shape = x.shape
+            dtype = x.dtype
+
+        # 根据噪声类型生成噪声
+        if self.noise_type == 'gaussian':
             if isinstance(x, np.ndarray):
-                shape = x.shape
-                dtype = x.dtype
-            else:  # 假设是PyTorch张量
-                shape = x.shape
-                dtype = x.dtype
-                
-            # 根据噪声类型生成噪声
-            if self.noise_type == 'gaussian':
-                if isinstance(x, np.ndarray):
-                    noise = np.random.normal(0, self.noise_level, shape).astype(dtype)
-                    x = x + noise
-                    x = np.clip(x, 0, 1) if x.max() <= 1 else np.clip(x, 0, 255)
+                noise = np.random.normal(0, self.noise_level, shape).astype(dtype)
+                x = x + noise
+                x = np.clip(x, 0, 1) if x.max() <= 1 else np.clip(x, 0, 255)
+            else:
+                noise = torch.randn_like(x) * self.noise_level
+                x = x + noise
+                x = torch.clamp(x, 0, 1) if x.max() <= 1 else torch.clamp(x, 0, 255)
+
+        elif self.noise_type == 'uniform':
+            if isinstance(x, np.ndarray):
+                noise = np.random.uniform(-self.noise_level, self.noise_level, shape).astype(dtype)
+                x = x + noise
+                x = np.clip(x, 0, 1) if x.max() <= 1 else np.clip(x, 0, 255)
+            else:
+                noise = (torch.rand_like(x) * 2 - 1) * self.noise_level
+                x = x + noise
+                x = torch.clamp(x, 0, 1) if x.max() <= 1 else torch.clamp(x, 0, 255)
+
+        elif self.noise_type == 'salt_pepper':
+            if isinstance(x, np.ndarray):
+                mask = np.random.random(shape) < self.noise_level/2
+                x = np.copy(x)
+                x[mask] = 1 if x.max() <= 1 else 255
+                mask = np.random.random(shape) < self.noise_level/2
+                x[mask] = 0
+            else:
+                mask = torch.rand_like(x) < self.noise_level/2
+                x = x.clone()
+                x[mask] = 1 if x.max() <= 1 else 255
+                mask = torch.rand_like(x) < self.noise_level/2
+                x[mask] = 0
+
+        elif self.noise_type == 'pure':
+            # 生成纯随机噪声图像，完全替换原始图像
+            if isinstance(x, np.ndarray):
+                if x.max() <= 1:
+                    x = np.random.random(shape).astype(dtype)
                 else:
-                    noise = torch.randn_like(x) * self.noise_level
-                    x = x + noise
-                    x = torch.clamp(x, 0, 1) if x.max() <= 1 else torch.clamp(x, 0, 255)
-                    
-            elif self.noise_type == 'uniform':
-                if isinstance(x, np.ndarray):
-                    noise = np.random.uniform(-self.noise_level, self.noise_level, shape).astype(dtype)
-                    x = x + noise
-                    x = np.clip(x, 0, 1) if x.max() <= 1 else np.clip(x, 0, 255)
+                    x = np.random.randint(0, 256, shape).astype(dtype)
+            else:
+                if x.max() <= 1:
+                    x = torch.rand_like(x)
                 else:
-                    noise = (torch.rand_like(x) * 2 - 1) * self.noise_level
-                    x = x + noise
-                    x = torch.clamp(x, 0, 1) if x.max() <= 1 else torch.clamp(x, 0, 255)
-                    
-            elif self.noise_type == 'salt_pepper':
-                if isinstance(x, np.ndarray):
-                    mask = np.random.random(shape) < self.noise_level/2
-                    x = np.copy(x)
-                    x[mask] = 1 if x.max() <= 1 else 255
-                    mask = np.random.random(shape) < self.noise_level/2
-                    x[mask] = 0
-                else:
-                    mask = torch.rand_like(x) < self.noise_level/2
-                    x = x.clone()
-                    x[mask] = 1 if x.max() <= 1 else 255
-                    mask = torch.rand_like(x) < self.noise_level/2
-                    x[mask] = 0
-                    
-            elif self.noise_type == 'pure':
-                # 生成纯随机噪声图像，完全替换原始图像
-                if isinstance(x, np.ndarray):
-                    if x.max() <= 1:
-                        x = np.random.random(shape).astype(dtype)
-                    else:
-                        x = np.random.randint(0, 256, shape).astype(dtype)
-                else:
-                    if x.max() <= 1:
-                        x = torch.rand_like(x)
-                    else:
-                        x = torch.randint(0, 256, shape, dtype=x.dtype, device=x.device)
+                    x = torch.randint(0, 256, shape, dtype=x.dtype, device=x.device)
         
         return x, y
 
@@ -336,13 +328,7 @@ class BackdoorHSVDataset(Dataset):
         # 如果原始数据集有data属性，复制它
         if hasattr(original_dataset, 'data'):
             self.data = original_dataset.data
-            
-        # 确定要注入触发器的样本索引
-        self.total_samples = len(original_dataset)
-        self.backdoor_samples = int(self.total_samples * trigger_ratio)
-        self.backdoor_indices = set(np.random.choice(range(self.total_samples), 
-                                                  self.backdoor_samples, replace=False))
-                                                  
+
         # 如果使用随机目标类别，为每个后门样本预生成目标类别
         self.random_targets = {}
         if random_target:
@@ -395,17 +381,15 @@ class BackdoorHSVDataset(Dataset):
 
     def __getitem__(self, idx):
         x, y = self.original_dataset[idx]
-        
-        # 如果当前索引在后门样本集中，添加触发器并可能修改标签
-        if idx in self.backdoor_indices:
-            # 添加触发器 - 将RGB转换为HSV
-            x = self.rgb_to_hsv(x)
-            
-            # 根据参数修改标签
-            if self.random_target:
-                y = self.random_targets[idx]
-            elif self.target_class is not None:
-                y = self.target_class
+
+        # 添加触发器 - 将RGB转换为HSV
+        x = self.rgb_to_hsv(x)
+
+        # 根据参数修改标签
+        if self.random_target:
+            y = self.random_targets[idx]
+        elif self.target_class is not None:
+            y = self.target_class
         
         return x, y
 
@@ -1373,17 +1357,10 @@ class RotationAdversarialDataset(Dataset):
         self.device = device
         self.num_classes = num_classes
 
-        
-        # 添加target属性以访问原始数据集的标签
-        if hasattr(original_dataset, 'target'):
-            self.target = original_dataset.target
-        elif hasattr(original_dataset, 'targets'):
-            self.target = original_dataset.targets
-        else:
-            # 如果原始数据集没有target属性，创建一个列表来存储标签
-            self.target = []
-            for _, label in original_dataset:
-                self.target.append(label)
+        self.target = []
+        for _, label in original_dataset:
+            self.target.append(self.target_class)
+        self.target = np.array(self.target)
         
     def __len__(self):
         return len(self.original_dataset)
@@ -1408,12 +1385,7 @@ class RotationAdversarialDataset(Dataset):
     def __getitem__(self, idx):
         x, y = self.original_dataset[idx]
 
-        if self.random_target:
-            target_label = np.random.randint(0, self.num_classes)
-        elif self.target_class is not None:
-            target_label = self.target_class
-        else:
-            target_label = y
+        target_label = self.target_class
 
         # 生成对抗样本
         x = self.generate_rotation_attack(x, y, target_label)
