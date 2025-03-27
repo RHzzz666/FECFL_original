@@ -1240,12 +1240,12 @@ for iteration in range(args.rounds):
         print(template.format(iteration + 1, np.mean(current_acc), np.mean(clients_best_acc)))
 
         # Print separate metrics for malicious and benign clients if label flipping was applied
-        if args.shift_type == 'label_flip' and hasattr(args, 'malicious_clients_list'):
-            template = ("Malicious clients avg acc: {:3.3f}, Benign clients avg acc: {:3.3f}")
-            print(template.format(np.mean(malicious_acc) if len(malicious_acc) > 0 else 0,
-                                  np.mean(benign_acc) if len(benign_acc) > 0 else 0))
+        template = ("Malicious clients avg acc: {:3.3f}, Benign clients avg acc: {:3.3f}")
+        print(template.format(np.mean(malicious_acc) if len(malicious_acc) > 0 else 0,
+                              np.mean(benign_acc) if len(benign_acc) > 0 else 0))
 
-            benign_avg_acc_per_round.append(np.mean(benign_acc) if len(benign_acc) > 0 else 0)
+        benign_avg_acc_per_round.append(np.mean(benign_acc) if len(benign_acc) > 0 else 0)
+
 
         ckp_avg_tacc.append(np.mean(current_acc))
         ckp_avg_best_tacc.append(np.mean(clients_best_acc))
