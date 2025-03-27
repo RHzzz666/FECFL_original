@@ -1432,13 +1432,6 @@ def inject_rotation_adversarial(clients, attack_indices, model, epsilon=0.1, tar
             device=device,
             num_classes=num_classes
         )
-        
-        # 更新客户端的数据加载器
-        clients[idx].ldr_train = DataLoader(
-            adversarial_dataset,
-            batch_size=clients[idx].ldr_train.batch_size,
-            shuffle=True,
-            drop_last=True
-        )
 
+        clients[idx].ds_train = adversarial_dataset
         clients[idx].refresh_dl()
