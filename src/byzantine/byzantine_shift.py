@@ -1440,3 +1440,5 @@ def inject_rotation_adversarial(clients, attack_indices, model, epsilon=0.1, tar
             shuffle=True,
             drop_last=True
         )
+
+        clients[idx].refresh_dl()
