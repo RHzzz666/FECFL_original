@@ -1158,6 +1158,27 @@ for iteration in range(args.rounds):
 
             print(f'Clusters: {clusters}')
 
+    # 再次打印特征相似度矩阵与新分组
+    if iteration == 10:
+        sim_matrix = []
+        for i, feature1 in enumerate(features_list):
+            row = []
+            for j, feature2 in enumerate(features_list):
+                # cos
+               sim = cosine_similarity([feature1], [feature2])[0][0]
+               if i == j:
+                   sim = 1.0
+               row.append(sim)
+            sim_matrix.append(row)
+        sim_matrix = np.array(sim_matrix)
+
+        distance_matrix = 1 - sim_matrix
+        print('')
+        print('Distance Matrix')
+        print(distance_matrix.tolist())
+        print(f'Clusters: {clusters}')
+
+
     """regular training"""
     idx_clusters_round = {}  # idx_cluster: clients[idx]所属组idx, idx_clusters_round: 每个组包含的clients
     for idx in idxs_users:
