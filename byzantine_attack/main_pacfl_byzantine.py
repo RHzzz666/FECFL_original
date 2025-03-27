@@ -1,28 +1,22 @@
 import sys
+import numpy as np
+
 import copy
 import os
 import gc
 import pickle
 
 import torch
-from sklearn.cluster import DBSCAN
-from sklearn.decomposition import TruncatedSVD
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.cluster import KMeans, AgglomerativeClustering
 from torch import nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset, ConcatDataset
 from torchvision import datasets, transforms
-import numpy as np
-
-
 sys.path.append('../')
 
 from src.dynamic.distribution_shift import *
 from src.models import *
-from src.models.autoencoders import ConvAE
 from src.fedavg import *
-from src.client.client_flexcfl import Client_FlexCFL
+from src.client import *
 from src.clustering import *
 from src.utils import *
 from datasets_models import get_datasets, init_nets
@@ -31,6 +25,7 @@ from src.byzantine.byzantine_shift import inject_noise_samples, inject_adversari
 args = args_parser()
 
 args.device = torch.device('cuda:{}'.format(args.gpu) if torch.cuda.is_available() else 'cpu')
+
 torch.cuda.set_device(args.gpu)  ## Setting cuda on GPU
 print('Using GPU: {} '.format(torch.cuda.current_device()))
 print('Using Device: {} '.format(args.device))
@@ -113,132 +108,67 @@ for i in range(args.num_users):
     traindata_cls_ratio[i] = temp_ratio
 
 clients = []
-global_features_dict = dict()
-features_list = []
+U_clients = []
 
-if args.dataset == 'cifar100':
-    n_classes = 100
-else:
-    n_classes = 10
-
+K = args.n_basis
+# K = 5
 for idx in range(args.num_users):
+
     train_ds_local = train_ds_list[idx]
     test_ds_local = test_ds_list[idx]
-    clients.append(Client_FlexCFL(idx, copy.deepcopy(users_model[idx]), args.local_bs, args.local_ep,
-                                  args.lr, args.momentum, args.device, train_ds_local, test_ds_local, num_classes=n_classes))
+
+    clients.append(Client_ClusterFL(idx, copy.deepcopy(users_model[idx]), args.local_bs, args.local_ep,
+                                    args.lr, args.momentum, args.device, train_ds_local, test_ds_local))
 
 if args.shift_type == 'incremental':
     increase_data(0, clients)
 
-"""FlexCFL"""
-'''
-1. initialization
-2. group_cold_start
-    2.1 pretrain
-    2.2 EDC and clustering
-    3.3 cluster_W, cluster_dW, auxiliary_global_model
-3. train
-    3.1 Random select clients
-    3.2 Change the clients's data distribution
-    3.3 Schedule clients (for example: reassign) or cold start clients, need selected clients only
-        3.3.1 distribution shift detection, and redo cold start
-        3.3.2 client_cold_start for newcomers: pretrain and assign a group
-    3.5 Train selected clients  # IntraGroupUpdate(FedAvg){train, aggregate}
-    3.6 Inter-group aggregation according to the group learning rate  
-    3.9 Update the auxiliary global model. Simply average group models without weights 
+for idx in range(args.num_users):
+    idxs_local = np.arange(len(clients[idx].ldr_train.dataset.data))
+    labels_local = np.array(clients[idx].ldr_train.dataset.target)
+    # Sort Labels Train
+    idxs_labels_local = np.vstack((idxs_local, labels_local))
+    idxs_labels_local = idxs_labels_local[:, idxs_labels_local[1, :].argsort()]
+    idxs_local = idxs_labels_local[0, :]
+    labels_local = idxs_labels_local[1, :]
 
-'''
+    uni_labels, cnt_labels = np.unique(labels_local, return_counts=True)
 
+    print(f'Labels: {uni_labels}, Counts: {cnt_labels}')
 
-def group_cold_start(args, cold_clients):
-    dW = []
-    W_1_list = []
-    for c in cold_clients:
-        c.set_state_dict(copy.deepcopy(initial_state_dict))
-        dW_c, W_1 = c.pre_train(args.local_ep)  # dW_c: grad_list, W_1: params dict after pretrain
-        dW.append(dW_c)
-        W_1_list.append(W_1)
-
-    delta_w = np.array(dW)  # shape=(n_clients, n_params)
-    # Decomposed the directions of updates to num_group of directional vectors
-    svd = TruncatedSVD(n_components=args.nclusters, random_state=args.seed)
-    decomp_updates = svd.fit_transform(delta_w.T)  # shape=(n_params, n_groups)
-    # n_components = decomp_updates.shape[-1]
-
-    decomposed_cossim_matrix = cosine_similarity(delta_w, decomp_updates.T)  # shape=(n_clients, n_clients)
-
-    affinity_matrix = decomposed_cossim_matrix
-    result = KMeans(args.nclusters, max_iter=20, random_state=args.seed).fit(affinity_matrix)
-    cluster_labels = result.labels_
-    unique_labels = set(cluster_labels)
-    clusters = [list(np.where(cluster_labels == label)[0]) for label in unique_labels]
-    print(clusters)
-
-    cluster_W = []  # omega_0,g
-    cluster_dW = []  # delta omega_0,g
-    for cluster_id, client_list in enumerate(clusters):
-        # calculate the means of cluster
-        params_list = [W_1_list[c_idx] for c_idx in client_list]  # dict
-        updates_list = [delta_w[c_idx] for c_idx in client_list]  # np.array
-        if params_list:
-            # All client have equal weight
-            cluster_W.append(FedAvg(params_list))
-            cluster_dW.append(np.mean(updates_list, axis=0))
+    nlabels = len(uni_labels)
+    cnt = 0
+    U_temp = []
+    for j in range(nlabels):
+        idxs_local = idxs_local.astype(int)
+        local_ds1 = clients[idx].ldr_train.dataset.data[idxs_local[cnt:cnt + cnt_labels[j]]]
+        local_ds1 = local_ds1.reshape(cnt_labels[j], -1)
+        local_ds1 = local_ds1.T
+        if type(clients[idx].ldr_train.dataset.target[idxs_local[cnt:cnt + cnt_labels[j]]]) == torch.Tensor:
+            label1 = list(set(clients[idx].ldr_train.dataset.target[idxs_local[cnt:cnt + cnt_labels[j]]].numpy()))
         else:
-            print("Error, cluster is empty")
+            label1 = list(set(clients[idx].ldr_train.dataset.target[idxs_local[cnt:cnt + cnt_labels[j]]]))
+        # assert len(label1) == 1
 
-    # auxiliary_global_model, not important
-    auxiliary_global_model = FedAvg(cluster_W)
+        # print(f'Label {j} : {label1}')
 
-    sim_matrix = cosine_similarity(delta_w, delta_w)
+        if args.partition == 'noniid-labeldir':
+            # print('Dir partition')
+            if label1 in list(traindata_cls_ratio[idx].keys()):
+                K = traindata_cls_ratio[idx][label1[0]]
+            else:
+                K = args.n_basis
+        if K > 0:
+            u1_temp, sh1_temp, vh1_temp = np.linalg.svd(local_ds1, full_matrices=False)
+            u1_temp = u1_temp / np.linalg.norm(u1_temp, ord=2, axis=0)
+            U_temp.append(u1_temp[:, 0:K])
 
-    return clusters, cluster_W, cluster_dW, auxiliary_global_model, affinity_matrix, sim_matrix
+        cnt += cnt_labels[j]
 
+    # U_temp = [u1_temp[:, 0:K], u2_temp[:, 0:K]]
+    U_clients.append(copy.deepcopy(np.hstack(U_temp)))
 
-def client_cold_start(args, client, client_id, clusters, cluster_dW, clients_clust_id):
-    client.set_state_dict(copy.deepcopy(initial_state_dict))
-    cupdate, csoln = client.pre_train(args.local_ep)
-
-    # Calculate the cosine dissimilarity between client's update and group's update
-    sim_list = []
-    for cluster_id, cluster in enumerate(clusters):
-        opt_updates = cluster_dW[cluster_id]
-        sim = cosine_similarity([cupdate], [opt_updates])[0][0]
-        sim_list.append(sim)
-    new_cluster_id = np.argmax(sim_list)
-    clusters[new_cluster_id].append(client_id)
-    print("Client {} is assigned to group {}".format(client_id, new_cluster_id))
-    clients_clust_id[client_id] = new_cluster_id
-
-
-def schedule_clients(args, clients, selected_idxs, clusters, cluster_dW, clients_clust_id):
-    schedule_results = None
-    # 1, Redo cold start distribution shift clients
-    shift_count, migration_count = 0, 0
-    for cid in selected_idxs:
-        client = clients[cid]
-        count, shifted = client.check_distribution_shift()
-        if count is not None and shifted:
-            print("Client {} detects distribution shift".format(cid))
-            shift_count += 1
-            prev_g = clients_clust_id[cid]
-
-            client_cold_start(args, client, cid, clusters, cluster_dW, clients_clust_id)
-
-            new_g = clients_clust_id[cid]
-            client.train_label_count = count
-            client.distribution_shift = False
-            if prev_g != new_g:
-                migration_count += 1
-                print(f'Client {cid} migrate from Group {prev_g} to Group {new_g}')
-    schedule_results = {'shift': shift_count, 'migration': migration_count}
-
-    # # 2, Cold start newcomer: pretrain and assign a group
-    # for client in selected_clients:
-    #     # for client in self.clients:
-    #     if client.has_uplink() == False:
-    #         self.client_cold_start(client, self.RAC)
-    print(f'Schedule Results: {schedule_results}')
+    print(f'Shape of U: {U_clients[-1].shape}')
 
 
 ###################################### Clustering
@@ -254,14 +184,17 @@ for r in range(1):
     for idx in clients_idxs:
         print(f'Client {idx}, Labels: {traindata_cls_counts[idx]}')
 
-    clusters, cluster_W, cluster_dW, auxiliary_global_model, affinity_matrix, sim_matrix = group_cold_start(args,
-                                                                                                            clients)
+    adj_mat = calculating_adjacency(clients_idxs, U_clients)
 
-    distance_matrix = 1 - np.array(sim_matrix)
+    distance_matrix = adj_mat
     print('')
     print('Distance Matrix')
     print(distance_matrix.tolist())
 
+    print('')
+    print("Cluster threshold")
+    print(args.cluster_alpha)
+    clusters = hierarchical_clustering(copy.deepcopy(adj_mat), thresh=args.cluster_alpha, linkage=args.linkage)
     cnt += 10
     print('')
     print('Clusters: ')
@@ -308,7 +241,7 @@ ckp_avg_best_tacc = []
 w_glob_per_cluster = [copy.deepcopy(initial_state_dict) for _ in range(len(clusters))]
 
 users_best_acc = [0 for _ in range(args.num_users)]
-# best_glob_acc = [0 for _ in range(len(clusters))]
+best_glob_acc = [0 for _ in range(len(clusters))]
 benign_avg_acc_per_round = []
 
 print_flag = False
@@ -408,7 +341,6 @@ for iteration in range(args.rounds):
             # 存储恶意客户端列表供后续分析
             args.malicious_clients_list = malicious_clients
 
-    schedule_clients(args, clients, idxs_users, clusters, cluster_dW, clients_clust_id)
 
     idx_clusters_round = {}  # 类似group_list
     for idx in idxs_users:
@@ -438,7 +370,6 @@ for iteration in range(args.rounds):
         final_local_tacc.append(acc)
         final_local_tloss.append(loss)
 
-    # IntraGroupUpdate
     total_data_points = {}
     for k in idx_clusters_round.keys():
         temp_sum = []
@@ -463,14 +394,10 @@ for iteration in range(args.rounds):
         w_glob_per_cluster[k] = copy.deepcopy(ww)
         net_glob.load_state_dict(copy.deepcopy(ww))
         _, acc = eval_test(net_glob, args, test_dl_global)
-        # if acc > best_glob_acc[k]:
-        #     best_glob_acc[k] = acc
+        if acc > best_glob_acc[k]:
+            best_glob_acc[k] = acc
 
-    # InterGroupAggregation
-    agg_lr = 0
-    w_clusters = copy.deepcopy(w_glob_per_cluster)
-
-    # print loss
+            # print loss
     loss_avg = sum(loss_locals) / len(loss_locals)
     avg_init_tloss = sum(init_local_tloss) / len(init_local_tloss)
     avg_init_tacc = sum(init_local_tacc) / len(init_local_tacc)
@@ -562,6 +489,7 @@ test_loss = []
 test_acc = []
 train_loss = []
 train_acc = []
+
 benign_train_acc = []
 benign_test_acc = []
 benign_test_loss = []
@@ -577,6 +505,7 @@ for idx in range(args.num_users):
 
     train_loss.append(loss)
     train_acc.append(acc)
+
     if hasattr(args, 'malicious_clients_list') and idx not in args.malicious_clients_list:
         # Track only benign clients for train and test accuracy
         benign_train_acc.append(acc)
@@ -590,12 +519,10 @@ test_acc = sum(test_acc) / len(test_acc)
 train_loss = sum(train_loss) / len(train_loss)
 train_acc = sum(train_acc) / len(train_acc)
 
-
 benign_test_acc = sum(benign_test_acc) / len(benign_test_acc)
 benign_train_acc = sum(benign_train_acc) / len(benign_train_acc)
 benign_test_loss = sum(benign_test_loss) / len(benign_test_loss)
 benign_train_loss = sum(benign_train_loss) / len(benign_train_loss)
-
 
 print(f'init_tacc_pr: {init_tacc_pr}')
 print('')
@@ -609,16 +536,17 @@ print('')
 
 print(f'Best Clients AVG Acc: {np.mean(clients_best_acc)}')
 
-# for jj in range(len(clusters)):
-#     print(f'Cluster {jj}, Best Glob Acc {best_glob_acc[jj]:.3f}')
-#
-# print(f'Average Best Glob Acc {np.mean(best_glob_acc[0:len(clusters)]):.3f}')
+for jj in range(len(clusters)):
+    print(f'Cluster {jj}, Best Glob Acc {best_glob_acc[jj]:.3f}')
+
+print(f'Average Best Glob Acc {np.mean(best_glob_acc[0:len(clusters)]):.3f}')
 print(f'max final_tacc_pr: {max(final_tacc_pr)}')
 
 print(f'ckp_avg_tacc: {ckp_avg_tacc}')
 
 print(f'Train Loss: {train_loss}, Test_loss: {test_loss}')
 print(f'Train Acc: {train_acc}, Test Acc: {test_acc}')
+
 print(f'Benign Train Loss: {benign_train_loss}, Benign Test Loss: {benign_test_loss}')
 print(f'Benign Train Acc: {benign_train_acc}, Benign Test Acc: {benign_test_acc}')
 
