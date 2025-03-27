@@ -75,7 +75,7 @@
 #     2>&1 | tee $dir'/'$current_time_safe'_blur_specific.txt'
 # done
 
- 使用旋转对抗攻击（指定0-30号客户端，中等强度）
+######使用旋转对抗攻击（指定0-30号客户端，中等强度）
 for seed in 66
 do
     dir='../save_results/byzantine/rotation_adv_specific/fecfl/cifar10'
