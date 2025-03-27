@@ -1372,13 +1372,7 @@ class RotationAdversarialDataset(Dataset):
         self.random_target = random_target
         self.device = device
         self.num_classes = num_classes
-        
-        # 计算需要攻击的样本数量
-        self.num_samples = len(original_dataset)
-        self.num_attack = int(self.num_samples * attack_ratio)
-        
-        # 随机选择要攻击的样本索引
-        self.attack_indices = np.random.choice(self.num_samples, self.num_attack, replace=False)
+
         
         # 添加target属性以访问原始数据集的标签
         if hasattr(original_dataset, 'target'):
@@ -1413,19 +1407,18 @@ class RotationAdversarialDataset(Dataset):
         
     def __getitem__(self, idx):
         x, y = self.original_dataset[idx]
-        
-        if idx in self.attack_indices:
-            # 确定目标标签
-            if self.random_target:
-                target_label = np.random.randint(0, self.num_classes)
-            elif self.target_class is not None:
-                target_label = self.target_class
-            else:
-                target_label = y
-                
-            # 生成对抗样本
-            x = self.generate_rotation_attack(x, y, target_label)
-            y = target_label
+
+        if self.random_target:
+            target_label = np.random.randint(0, self.num_classes)
+        elif self.target_class is not None:
+            target_label = self.target_class
+        else:
+            target_label = y
+
+        # 生成对抗样本
+        x = self.generate_rotation_attack(x, y, target_label)
+        y = target_label
+
             
         return x, y
 
