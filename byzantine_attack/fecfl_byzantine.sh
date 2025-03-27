@@ -99,7 +99,7 @@ do
     --savedir='../save_results/' \
     --partition='homo' \
     --alg='fecfl' \
-    --cluster_alpha=0.00001 \
+    --cluster_alpha=0.0001 \
     --linkage='average' \
     --gpu=1 \
     --print_freq=10 \
