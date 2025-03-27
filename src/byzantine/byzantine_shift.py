@@ -1363,55 +1363,17 @@ class RotationAdversarialDataset(Dataset):
     def __len__(self):
         return len(self.original_dataset)
         
-    def generate_rotation_attack(self, x, original_label, target_label=None):
-        # 确保输入需要梯度
-        x.requires_grad = True
-        
-        # 将输入移动到正确的设备上
-        x = x.to(self.device)
-        
-        # 将模型设置为评估模式
-        self.model.eval()
-        
-        # 前向传播
-        output = self.model(x.unsqueeze(0))
-        
-        # 计算损失
-        criterion = nn.CrossEntropyLoss()
-        if target_label is not None:
-            target = torch.tensor([target_label], device=self.device)
-        else:
-            target = torch.tensor([original_label], device=self.device)
-        loss = criterion(output, target)
-        
-        # 清除之前的梯度
-        self.model.zero_grad()
-        
-        # 反向传播
-        loss.backward()
-        
-        # 获取梯度
-        if x.grad is None:
-            # 如果梯度为None，创建一个零梯度
-            grad = torch.zeros_like(x)
-        else:
-            grad = x.grad.data
+    def generate_rotation_attack(self, x):
         
         # 应用旋转变换
         rotated_x = torch.rot90(x, k=1)  # 顺时针旋转90度
-        
-        # 计算扰动
-        perturbation = self.epsilon * grad.sign()
-        
-        # 应用扰动
-        perturbed_x = x + perturbation
+
         
         # 将旋转后的图像和扰动后的图像进行混合
         alpha = 0.5  # 混合比例
         # 确保维度匹配
         rotated_x = rotated_x.reshape(x.shape)
-        perturbed_x = perturbed_x.reshape(x.shape)
-        adversarial_x = alpha * rotated_x + (1 - alpha) * perturbed_x
+        adversarial_x = alpha * rotated_x
         
         # 确保像素值在[0,1]范围内
         adversarial_x = torch.clamp(adversarial_x, 0, 1)
