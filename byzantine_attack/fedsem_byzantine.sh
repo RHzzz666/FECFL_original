@@ -97,7 +97,7 @@ do
     --savedir='../save_results/' \
     --partition='homo' \
     --alg='fedsem' \
-    --ncluster=4 \
+    --ncluster=1 \
     --gpu=1 \
     --print_freq=10 \
     --seed=$seed \

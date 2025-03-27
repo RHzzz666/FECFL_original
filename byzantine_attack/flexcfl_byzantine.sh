@@ -99,9 +99,9 @@ do
     --savedir='../save_results/' \
     --partition='homo' \
     --alg='flexcfl' \
-    --nclusters=4 \
+    --nclusters=1 \
     --pretrain_epoch=10 \
-    --gpu=1 \
+    --gpu=2 \
     --print_freq=10 \
     --seed=$seed \
     --shift_type='rotation_adversarial' \
