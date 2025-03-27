@@ -1409,9 +1409,6 @@ class RotationAdversarialDataset(Dataset):
         # 确保像素值在[0,1]范围内
         adversarial_x = torch.clamp(adversarial_x, 0, 1)
         
-        # 将结果移回CPU
-        adversarial_x = adversarial_x.cpu()
-        
         return adversarial_x
         
     def __getitem__(self, idx):
