@@ -17,6 +17,37 @@ from torch.utils.data import DataLoader
 # pattern_pos: (仅像素模式) 触发器位置 (corner, center, random)
 # pattern_color: (仅像素模式) 触发器颜色，格式为 "R,G,B" 值
 
+# 添加一个辅助函数，用于解析malicious_clients参数
+def parse_malicious_clients(args):
+    """
+    解析malicious_clients参数，返回恶意客户端ID列表
+
+    Args:
+        args: 命令行参数
+
+    Returns:
+        list: 恶意客户端ID列表，如果未指定则返回None
+    """
+    if args.malicious_clients is None:
+        return None
+
+    try:
+        # 解析逗号分隔的客户端ID列表
+        client_ids = [int(id_str) for id_str in args.malicious_clients.split(',')]
+        # 确保ID在有效范围内
+        valid_ids = [id for id in client_ids if 0 <= id < args.num_users]
+
+        if len(valid_ids) == 0:
+            print("Warning: No valid client IDs in malicious_clients parameter")
+            return None
+
+        if len(valid_ids) != len(client_ids):
+            print(f"Warning: Some client IDs in malicious_clients are out of range (0-{args.num_users-1})")
+
+        return valid_ids
+    except Exception as e:
+        print(f"Error parsing malicious_clients parameter: {e}")
+        return None
 
 class NoiseInjectionDataset(Dataset):
     def __init__(self, original_dataset, noise_level=0.1):

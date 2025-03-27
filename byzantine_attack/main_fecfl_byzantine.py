@@ -22,39 +22,8 @@ from src.client.client_fecfl import Client_FECFL
 from src.clustering import *
 from src.utils import *
 from datasets_models import get_datasets, init_nets
-from src.byzantine.byzantine_shift import inject_noise_samples, inject_adversarial_samples, inject_backdoor_hsv, inject_backdoor_pixel_pattern, inject_backdoor_rotation, inject_backdoor_blur, inject_backdoor_inversion, inject_backdoor_crop, inject_backdoor_contrast, inject_fgsm_adversarial, inject_rotation_adversarial
+from src.byzantine.byzantine_shift import inject_noise_samples, inject_adversarial_samples, inject_backdoor_hsv, inject_backdoor_pixel_pattern, inject_backdoor_rotation, inject_backdoor_blur, inject_backdoor_inversion, inject_backdoor_crop, inject_backdoor_contrast, inject_fgsm_adversarial, inject_rotation_adversarial, parse_malicious_clients
 
-# 添加一个辅助函数，用于解析malicious_clients参数
-def parse_malicious_clients(args):
-    """
-    解析malicious_clients参数，返回恶意客户端ID列表
-    
-    Args:
-        args: 命令行参数
-        
-    Returns:
-        list: 恶意客户端ID列表，如果未指定则返回None
-    """
-    if args.malicious_clients is None:
-        return None
-    
-    try:
-        # 解析逗号分隔的客户端ID列表
-        client_ids = [int(id_str) for id_str in args.malicious_clients.split(',')]
-        # 确保ID在有效范围内
-        valid_ids = [id for id in client_ids if 0 <= id < args.num_users]
-        
-        if len(valid_ids) == 0:
-            print("Warning: No valid client IDs in malicious_clients parameter")
-            return None
-            
-        if len(valid_ids) != len(client_ids):
-            print(f"Warning: Some client IDs in malicious_clients are out of range (0-{args.num_users-1})")
-            
-        return valid_ids
-    except Exception as e:
-        print(f"Error parsing malicious_clients parameter: {e}")
-        return None
 
 args = args_parser()
 
@@ -410,57 +379,6 @@ for iteration in range(args.rounds):
             # Store the malicious clients for later analysis
             args.malicious_clients_list = malicious_clients
             
-            # 攻击后重新提取所有客户端的特征
-            print("重新计算攻击后的特征相似度矩阵...")
-            post_attack_features_list = []
-            for idx in range(args.num_users):
-                features = clients[idx].extract_features_avg()
-                post_attack_features_list.append(copy.deepcopy(features))
-            
-            # 计算攻击后的相似度矩阵
-            post_attack_sim_matrix = []
-            for i, feature1 in enumerate(post_attack_features_list):
-                row = []
-                for j, feature2 in enumerate(post_attack_features_list):
-                    # 计算余弦相似度
-                    sim = cosine_similarity([feature1], [feature2])[0][0]
-                    if i == j:
-                        sim = 1.0
-                    row.append(sim)
-                post_attack_sim_matrix.append(row)
-            post_attack_sim_matrix = np.array(post_attack_sim_matrix)
-            
-            # 计算距离矩阵
-            post_attack_distance_matrix = 1 - post_attack_sim_matrix
-            
-            print('\n攻击后的距离矩阵:')
-            print(post_attack_distance_matrix.tolist())
-            
-            # 分析恶意客户端和良性客户端之间的距离
-            if hasattr(args, 'malicious_clients_list') and len(args.malicious_clients_list) > 0:
-                print("\n恶意客户端与良性客户端之间的平均距离:")
-                benign_clients = [i for i in range(args.num_users) if i not in args.malicious_clients_list]
-                
-                malicious_to_malicious_distances = []
-                malicious_to_benign_distances = []
-                benign_to_benign_distances = []
-                
-                for i in args.malicious_clients_list:
-                    for j in args.malicious_clients_list:
-                        if i != j:
-                            malicious_to_malicious_distances.append(post_attack_distance_matrix[i][j])
-                    
-                    for j in benign_clients:
-                        malicious_to_benign_distances.append(post_attack_distance_matrix[i][j])
-                
-                for i in benign_clients:
-                    for j in benign_clients:
-                        if i != j:
-                            benign_to_benign_distances.append(post_attack_distance_matrix[i][j])
-                
-                print(f"恶意客户端之间的平均距离: {np.mean(malicious_to_malicious_distances):.4f}")
-                print(f"恶意客户端到良性客户端的平均距离: {np.mean(malicious_to_benign_distances):.4f}")
-                print(f"良性客户端之间的平均距离: {np.mean(benign_to_benign_distances):.4f}")
 
     elif args.shift_type == 'backdoor_pixel':
         # Apply backdoor attack with pixel pattern as trigger
