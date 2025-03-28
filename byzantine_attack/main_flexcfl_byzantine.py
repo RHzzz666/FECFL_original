@@ -619,7 +619,5 @@ print(f'ckp_avg_tacc: {ckp_avg_tacc}')
 
 print(f'Train Loss: {train_loss}, Test_loss: {test_loss}')
 print(f'Train Acc: {train_acc}, Test Acc: {test_acc}')
-print(f'Benign Train Loss: {benign_train_loss}, Benign Test Loss: {benign_test_loss}')
-print(f'Benign Train Acc: {benign_train_acc}, Benign Test Acc: {benign_test_acc}')
-
-print(f'Bening test acc per round: {benign_avg_acc_per_round}')
+print(f'Benign Test Loss: {benign_test_loss}')
+print(f'Benign Test Acc: {benign_test_acc}')
